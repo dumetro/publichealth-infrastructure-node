@@ -46,8 +46,8 @@ helm upgrade --install mlflow ./charts/mlflow \
   -f $CONFIG_FILE
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace $NAMESPACE \
-  -f $CONFIG_FILE \
-  -f config/values/jupyterhub-values.yaml
+  -f config/values/jupyterhub-values.yaml \
+  -f $CONFIG_FILE
 
 # 8. Serving
 # Download and apply KServe manifest (pinned version v0.11.0)

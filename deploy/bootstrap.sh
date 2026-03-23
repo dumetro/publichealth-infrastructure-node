@@ -55,8 +55,22 @@ fi
 echo ""
 echo "[2/8] Installing yq..."
 YQ_VERSION="v4.44.3"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64)
+    YQ_ARCH="amd64"
+    ;;
+  aarch64|arm64)
+    YQ_ARCH="arm64"
+    ;;
+  *)
+    echo "ERROR: Unsupported architecture for yq: $ARCH"
+    echo "       Supported architectures: amd64, arm64"
+    exit 1
+    ;;
+esac
 wget -qO /usr/local/bin/yq \
-  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${YQ_ARCH}"
 chmod +x /usr/local/bin/yq
 echo "  -> $(yq --version)"
 

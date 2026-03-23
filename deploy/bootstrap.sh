@@ -90,8 +90,17 @@ echo "  -> $(helm version --short)"
 echo ""
 echo "[4/8] Installing k3s (includes kubectl + local-path StorageClass)..."
 # --disable=traefik: project uses ingress-nginx, not Traefik
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -
+# Pin k3s version for reproducible installs; override by setting K3S_VERSION in the environment.
+K3S_VERSION="${K3S_VERSION:-v1.30.4+k3s1}"
+K3S_INSTALL_SCRIPT="/tmp/install-k3s.sh"
 
+curl -sfL https://get.k3s.io -o "$K3S_INSTALL_SCRIPT"
+if [[ ! -s "$K3S_INSTALL_SCRIPT" ]]; then
+  echo "ERROR: Failed to download k3s installer script or script is empty."
+  exit 1
+fi
+chmod 700 "$K3S_INSTALL_SCRIPT"
+INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "$K3S_INSTALL_SCRIPT"
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 

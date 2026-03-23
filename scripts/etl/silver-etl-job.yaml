@@ -1,0 +1,44 @@
+apiVersion: "sparkoperator.k8s.io/v1beta2"
+kind: SparkApplication
+metadata:
+  name: bronze-to-silver-etl
+  namespace: data-stack
+spec:
+  type: SQL
+  mode: cluster
+  image: "apache/spark:3.5.0"
+  imagePullPolicy: IfNotPresent
+  mainApplicationFile: "local:///opt/spark/sql/bronze_to_silver.sql"
+  sparkVersion: "3.5.0"
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 3
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 5
+    onSubmissionFailureRetryInterval: 20
+  sparkConf:
+    "spark.jars.packages": "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.apache.hadoop:hadoop-aws:3.3.4"
+    "spark.sql.catalog.uc": "org.apache.iceberg.spark.SparkCatalog"
+    "spark.sql.catalog.uc.type": "rest"
+    "spark.sql.catalog.uc.uri": "http://unity-catalog.data-stack.svc.cluster.local:8080/api/2.1/unity-catalog/iceberg"
+    "spark.sql.catalog.uc.token": "${UC_ACCESS_TOKEN}"
+    "spark.sql.catalog.uc.io-impl": "org.apache.iceberg.aws.s3.S3FileIO"
+    "spark.sql.defaultCatalog": "uc"
+  hadoopConf:
+    "fs.s3a.endpoint": "http://minio.data-stack.svc.cluster.local:9000"
+    "fs.s3a.path.style.access": "true"
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "2g"
+    serviceAccount: spark
+    env:
+      - name: UC_ACCESS_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: unity-catalog-creds
+            key: access-token
+  executor:
+    cores: 1
+    instances: 2
+    memory: "2g"

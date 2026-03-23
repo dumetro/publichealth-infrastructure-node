@@ -1,0 +1,16 @@
+spark:
+  jobNamespaces:
+    - data-stack
+
+webhook:
+  enable: true
+
+controller:
+  replicas: 1
+
+sparkJobNamespace: data-stack
+
+serviceAccounts:
+  spark:
+    create: true
+    name: spark

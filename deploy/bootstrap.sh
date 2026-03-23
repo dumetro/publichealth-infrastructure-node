@@ -55,23 +55,66 @@ fi
 echo ""
 echo "[2/8] Installing yq..."
 YQ_VERSION="v4.44.3"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64)
+    YQ_ARCH="amd64"
+    ;;
+  aarch64|arm64)
+    YQ_ARCH="arm64"
+    ;;
+  *)
+    echo "ERROR: Unsupported architecture for yq: $ARCH"
+    echo "       Supported architectures: amd64, arm64"
+    exit 1
+    ;;
+esac
 wget -qO /usr/local/bin/yq \
-  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${YQ_ARCH}"
 chmod +x /usr/local/bin/yq
 echo "  -> $(yq --version)"
 
 # ---- 3. Helm -----------------------------------------------
 echo ""
 echo "[3/8] Installing Helm..."
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+HELM_VERSION="v3.14.4"
+HELM_ARCH="linux-amd64"
+HELM_TAR="helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+HELM_URL="https://get.helm.sh/${HELM_TAR}"
+
+# NOTE: Replace the placeholder below with the official SHA-256 checksum
+# for ${HELM_TAR} from the Helm release page before using in production.
+HELM_SHA256_EXPECTED="REPLACE_WITH_OFFICIAL_SHA256_FOR_${HELM_TAR}"
+
+TMP_HELM_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_HELM_DIR"' EXIT
+
+echo "  -> Downloading Helm ${HELM_VERSION} from ${HELM_URL}..."
+curl -fsSL -o "${TMP_HELM_DIR}/${HELM_TAR}" "${HELM_URL}"
+
+echo "  -> Verifying Helm archive checksum..."
+echo "${HELM_SHA256_EXPECTED}  ${TMP_HELM_DIR}/${HELM_TAR}" | sha256sum -c -
+
+echo "  -> Installing Helm binary to /usr/local/bin/helm..."
+tar -xzf "${TMP_HELM_DIR}/${HELM_TAR}" -C "${TMP_HELM_DIR}"
+install -m 0755 "${TMP_HELM_DIR}/linux-amd64/helm" /usr/local/bin/helm
 echo "  -> $(helm version --short)"
 
 # ---- 4. k3s ------------------------------------------------
 echo ""
 echo "[4/8] Installing k3s (includes kubectl + local-path StorageClass)..."
 # --disable=traefik: project uses ingress-nginx, not Traefik
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik" sh -
+# Pin k3s version for reproducible installs; override by setting K3S_VERSION in the environment.
+K3S_VERSION="${K3S_VERSION:-v1.30.4+k3s1}"
+K3S_INSTALL_SCRIPT="/tmp/install-k3s.sh"
 
+curl -sfL https://get.k3s.io -o "$K3S_INSTALL_SCRIPT"
+if [[ ! -s "$K3S_INSTALL_SCRIPT" ]]; then
+  echo "ERROR: Failed to download k3s installer script or script is empty."
+  exit 1
+fi
+chmod 700 "$K3S_INSTALL_SCRIPT"
+INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "$K3S_INSTALL_SCRIPT"
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 

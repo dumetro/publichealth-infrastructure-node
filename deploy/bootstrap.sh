@@ -124,9 +124,36 @@ helm repo update
 echo "  -> All repos up to date"
 helm repo list
 
-# ---- 7. Build & import custom Jupyter image ----------------
+# ---- 7. Node.js 20 + portless ---------------------------------
 echo ""
-echo "[7/8] Building custom Jupyter health environment image..."
+echo "[7/10] Installing Node.js 20 and portless..."
+# NodeSource LTS repo for Ubuntu
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y -q nodejs
+echo "  -> $(node --version)  npm $(npm --version)"
+
+# Install portless globally — must NOT be a project dependency
+npm install -g portless
+echo "  -> portless $(portless --version 2>/dev/null || echo 'installed')"
+
+# Persist portless proxy auto-start for the calling user's login shell.
+# portless proxy start is idempotent; safe to call on subsequent logins.
+BASHRC="$REAL_HOME/.bashrc"
+if ! grep -q 'portless proxy start' "$BASHRC" 2>/dev/null; then
+  cat >> "$BASHRC" <<'EOF'
+
+# portless — local dev reverse proxy (port 1355)
+# Starts automatically; maps all k8s service port-forwards to named .localhost URLs.
+if command -v portless &>/dev/null; then
+  portless proxy start --quiet 2>/dev/null || true
+fi
+EOF
+  echo "  -> portless proxy auto-start added to $BASHRC"
+fi
+
+# ---- 8. Build & import custom Jupyter image ----------------
+echo ""
+echo "[8/10] Building custom Jupyter health environment image..."
 JUPYTER_BUILD_CTX="$PROJECT_ROOT/docker/jupyter-health-env"
 IMAGE_TAG="jupyter-health-env:latest"
 
@@ -138,10 +165,17 @@ echo "  -> Importing image into k3s containerd runtime..."
 docker save "$IMAGE_TAG" | k3s ctr images import -
 echo "  -> Image available in k3s: $IMAGE_TAG"
 
-# ---- 8. Namespace + secrets --------------------------------
+# ---- 9. Namespace + secrets --------------------------------
 echo ""
-echo "[8/8] Provisioning Kubernetes namespace and secrets..."
+echo "[9/10] Provisioning Kubernetes namespace and secrets..."
 bash "$SCRIPT_DIR/setup-secrets.sh"
+
+# ---- 10. Portless proxy initial start ---------------------
+echo ""
+echo "[10/10] Starting portless proxy (port 1355)..."
+# Run as the real user — portless stores its state in the user's home dir
+sudo -u "$REAL_USER" portless proxy start 2>/dev/null || true
+echo "  -> portless proxy running on http://*.localhost:1355"
 
 # ---- Done --------------------------------------------------
 echo ""
@@ -151,8 +185,17 @@ echo "=================================================="
 echo ""
 echo "Next steps:"
 echo "  1.  bash deploy/deploy-node.sh"
+echo "  2.  bash deploy/dev-proxy.sh      # named local URLs for all k8s services"
 echo ""
-echo "Service endpoints (add to /etc/hosts -> $(hostname -I | awk '{print $1}')):  "
+echo "portless service URLs (available after 'bash deploy/dev-proxy.sh'):"
+echo "  http://grafana.health-node.localhost:1355"
+echo "  http://jupyter.health-node.localhost:1355"
+echo "  http://minio.health-node.localhost:1355"
+echo "  http://airflow.health-node.localhost:1355"
+echo "  http://mlflow.health-node.localhost:1355"
+echo "  http://trino.health-node.localhost:1355"
+echo ""
+echo "In-cluster ingress hostnames (add to /etc/hosts -> $(hostname -I | awk '{print $1}')):"
 echo "  jupyter.health-node.local   — JupyterHub notebook workspace"
 echo "  grafana.health-node.local   — Grafana dashboards"
 echo ""

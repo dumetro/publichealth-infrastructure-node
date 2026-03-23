@@ -9,8 +9,13 @@ hub:
       admin_users:
         - admin
     DummyAuthenticator:
-      # Change before any network-exposed deployment
-      password: "health-node-dev"
+      # NOTE: Do not commit a real shared password here.
+      # Provide a non-empty password via a non-committed override values file, for example:
+      #   helm upgrade --install jupyterhub jupyterhub/jupyterhub \
+      #     -f config/values/jupyterhub-values.yaml \
+      #     -f config/values/jupyterhub-values.local.yaml
+      # The local override file should be excluded from version control.
+      password: ""
 
 proxy:
   # 64-char hex token — regenerate per installation with:

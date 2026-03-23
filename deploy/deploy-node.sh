@@ -12,7 +12,6 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   -f config/values/ingress-values.yaml
 
 # 2. Monitoring Stack
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   -f config/values/monitoring-values.yaml
@@ -47,7 +46,8 @@ helm upgrade --install mlflow ./charts/mlflow \
   -f $CONFIG_FILE
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace $NAMESPACE \
-  -f $CONFIG_FILE
+  -f $CONFIG_FILE \
+  -f config/values/jupyterhub-values.yaml
 
 # 8. Serving
 # Download and apply KServe manifest (pinned version v0.11.0)

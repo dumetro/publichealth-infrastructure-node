@@ -18,9 +18,6 @@ hub:
       password: ""
 
 proxy:
-  # 64-char hex token — regenerate per installation with:
-  #   openssl rand -hex 32
-  secretToken: "a8f3d1c9e2b705469ab3de8f20c5a16b4e97f8102d6c3a5e9f1b4d70c28e53a1"
   service:
     type: ClusterIP
 

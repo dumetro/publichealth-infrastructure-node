@@ -44,8 +44,8 @@ singleuser:
 
   # Connection details for platform services; credentials from minio-creds secret
   extraEnv:
-    MLFLOW_TRACKING_URI: "http://mlflow.data-stack.svc.cluster.local:5000"
-    AWS_ENDPOINT_URL: "http://minio.data-stack.svc.cluster.local:9000"
+    MLFLOW_TRACKING_URI: "http://mlflow.{{ .Values.global.namespace }}.svc.cluster.local:5000"
+    AWS_ENDPOINT_URL: "http://minio.{{ .Values.global.namespace }}.svc.cluster.local:9000"
     AWS_DEFAULT_REGION: "us-east-1"
     AWS_ACCESS_KEY_ID:
       valueFrom:

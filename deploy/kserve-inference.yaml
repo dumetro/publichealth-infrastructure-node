@@ -1,0 +1,16 @@
+apiVersion: "serving.kserve.io/v1beta1"
+kind: "InferenceService"
+metadata:
+  name: "disease-prediction-api"
+  namespace: "ai-serving"
+spec:
+  predictor:
+    serviceAccountName: "s3-reader-sa"
+    model:
+      modelFormat:
+        name: mlflow
+      storageUri: "s3://mlflow-artifacts/1/a5b6c7.../artifacts/model"
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi

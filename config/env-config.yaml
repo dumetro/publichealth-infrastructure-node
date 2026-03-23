@@ -1,0 +1,26 @@
+global:
+  domain: health-node.local
+  storageClass: "local-path"
+  namespace: "data-stack"
+
+minio:
+  rootUser: "admin"
+  rootPassword: "SuperSecretPassword123"
+  buckets: ["raw-data", "iceberg-tables", "mlflow-artifacts"]
+
+unity_catalog:
+  admin_token: "uc-secret-token"
+
+jupyterhub:
+  auth_type: "dummy"
+
+mlflow:
+  s3_endpoint: "http://minio.data-stack.svc.cluster.local:9000"
+
+monitoring:
+  enabled: true
+  grafana:
+    adminPassword: "SecureGrafanaPassword123!"
+    domain: "grafana.health-node.local"
+  prometheus:
+    retention: "15d"

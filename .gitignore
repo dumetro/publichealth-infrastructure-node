@@ -1,0 +1,14 @@
+# Downloaded runtime artifacts
+deploy/kserve-v*.yaml
+
+# Editor and OS artifacts
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

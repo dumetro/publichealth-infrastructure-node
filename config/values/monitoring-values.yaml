@@ -1,0 +1,33 @@
+grafana:
+  adminPassword: "SecureGrafanaPassword123!"
+  ingress:
+    enabled: true
+    hosts:
+      - grafana.health-node.local
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+
+prometheus:
+  prometheusSpec:
+    retention: "15d"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi

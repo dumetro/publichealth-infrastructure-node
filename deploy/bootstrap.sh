@@ -63,7 +63,27 @@ echo "  -> $(yq --version)"
 # ---- 3. Helm -----------------------------------------------
 echo ""
 echo "[3/8] Installing Helm..."
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+HELM_VERSION="v3.14.4"
+HELM_ARCH="linux-amd64"
+HELM_TAR="helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+HELM_URL="https://get.helm.sh/${HELM_TAR}"
+
+# NOTE: Replace the placeholder below with the official SHA-256 checksum
+# for ${HELM_TAR} from the Helm release page before using in production.
+HELM_SHA256_EXPECTED="REPLACE_WITH_OFFICIAL_SHA256_FOR_${HELM_TAR}"
+
+TMP_HELM_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_HELM_DIR"' EXIT
+
+echo "  -> Downloading Helm ${HELM_VERSION} from ${HELM_URL}..."
+curl -fsSL -o "${TMP_HELM_DIR}/${HELM_TAR}" "${HELM_URL}"
+
+echo "  -> Verifying Helm archive checksum..."
+echo "${HELM_SHA256_EXPECTED}  ${TMP_HELM_DIR}/${HELM_TAR}" | sha256sum -c -
+
+echo "  -> Installing Helm binary to /usr/local/bin/helm..."
+tar -xzf "${TMP_HELM_DIR}/${HELM_TAR}" -C "${TMP_HELM_DIR}"
+install -m 0755 "${TMP_HELM_DIR}/linux-amd64/helm" /usr/local/bin/helm
 echo "  -> $(helm version --short)"
 
 # ---- 4. k3s ------------------------------------------------

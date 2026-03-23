@@ -1,0 +1,97 @@
+# JupyterHub workspace configuration — Public Health AI Node
+# Applied via: helm upgrade --install jupyterhub jupyterhub/jupyterhub -f this-file
+
+hub:
+  config:
+    JupyterHub:
+      authenticator_class: dummy
+    Authenticator:
+      admin_users:
+        - admin
+    DummyAuthenticator:
+      # NOTE: Do not commit a real shared password here.
+      # Provide a non-empty password via a non-committed override values file, for example:
+      #   helm upgrade --install jupyterhub jupyterhub/jupyterhub \
+      #     -f config/values/jupyterhub-values.yaml \
+      #     -f config/values/jupyterhub-values.local.yaml
+      # The local override file should be excluded from version control.
+      password: ""
+
+proxy:
+  service:
+    type: ClusterIP
+
+ingress:
+  enabled: false
+  annotations:
+    kubernetes.io/ingress.class: nginx
+  hosts:
+    - '{{ printf "jupyter.%s" .Values.global.domain }}'
+
+singleuser:
+  # Built by bootstrap.sh and imported into k3s containerd
+  image:
+    name: jupyter-health-env
+    tag: latest
+    pullPolicy: Never
+
+  # Persistent home directory per user (survives pod restarts)
+  storage:
+    dynamic:
+      storageClass: local-path
+    capacity: 10Gi
+    homeMountPath: /home/jovyan
+
+  # Connection details for platform services; credentials from minio-creds secret
+  extraEnv:
+    MLFLOW_TRACKING_URI: "http://mlflow.{{ .Values.global.namespace }}.svc.cluster.local:5000"
+    AWS_ENDPOINT_URL: "http://minio.{{ .Values.global.namespace }}.svc.cluster.local:9000"
+    AWS_DEFAULT_REGION: "us-east-1"
+    AWS_ACCESS_KEY_ID:
+      valueFrom:
+        secretKeyRef:
+          name: minio-creds
+          key: access-key
+    AWS_SECRET_ACCESS_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: minio-creds
+          key: secret-key
+
+  # Default resource envelope; overridden per-profile below
+  cpu:
+    limit: 2
+    guarantee: 0.5
+  memory:
+    limit: 4G
+    guarantee: 1G
+
+  # Compute profiles presented to users at server spawn
+  profileList:
+    - display_name: "Standard — 1 CPU / 2 GB"
+      description: "Data exploration, SQL queries, light ETL."
+      default: true
+      kubespawner_override:
+        cpu_limit: 1
+        cpu_guarantee: 0.5
+        mem_limit: "2G"
+        mem_guarantee: "1G"
+
+    - display_name: "Large Compute — 2 CPU / 4 GB"
+      description: "ML training, feature engineering, heavy data processing."
+      kubespawner_override:
+        cpu_limit: 2
+        cpu_guarantee: 1
+        mem_limit: "4G"
+        mem_guarantee: "2G"
+
+# Disable multi-node user scheduler — this node is single-node k3s
+scheduling:
+  userScheduler:
+    enabled: false
+
+# Cull idle single-user servers to reclaim resources
+cull:
+  enabled: true
+  timeout: 3600   # Cull after 1 hour idle
+  every: 600      # Check every 10 minutes

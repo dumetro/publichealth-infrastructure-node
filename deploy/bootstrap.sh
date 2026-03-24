@@ -38,7 +38,7 @@ echo "=================================================="
 
 # ---- 1. System dependencies --------------------------------
 echo ""
-echo "[1/8] Installing system dependencies..."
+echo "[1/10] Installing system dependencies..."
 apt-get update -q
 apt-get install -y -q \
   curl wget ca-certificates gnupg lsb-release \
@@ -53,7 +53,7 @@ fi
 
 # ---- 2. yq -------------------------------------------------
 echo ""
-echo "[2/8] Installing yq..."
+echo "[2/10] Installing yq..."
 YQ_VERSION="v4.44.3"
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -76,7 +76,7 @@ echo "  -> $(yq --version)"
 
 # ---- 3. Helm -----------------------------------------------
 echo ""
-echo "[3/8] Installing Helm..."
+echo "[3/10] Installing Helm..."
 HELM_VERSION="v3.14.4"
 HELM_ARCH="linux-amd64"
 HELM_TAR="helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
@@ -102,7 +102,7 @@ echo "  -> $(helm version --short)"
 
 # ---- 4. k3s ------------------------------------------------
 echo ""
-echo "[4/8] Installing k3s (includes kubectl + local-path StorageClass)..."
+echo "[4/10] Installing k3s (includes kubectl + local-path StorageClass)..."
 # --disable=traefik: project uses ingress-nginx, not Traefik
 # Pin k3s version for reproducible installs; override by setting K3S_VERSION in the environment.
 K3S_VERSION="${K3S_VERSION:-v1.30.4+k3s1}"
@@ -125,7 +125,7 @@ kubectl get nodes -o wide
 
 # ---- 5. kubeconfig for calling user ------------------------
 echo ""
-echo "[5/8] Configuring kubeconfig for $REAL_USER..."
+echo "[5/10] Configuring kubeconfig for $REAL_USER..."
 KUBE_DIR="$REAL_HOME/.kube"
 mkdir -p "$KUBE_DIR"
 cp /etc/rancher/k3s/k3s.yaml "$KUBE_DIR/config"
@@ -141,7 +141,7 @@ echo "  -> kubeconfig written to $KUBE_DIR/config"
 
 # ---- 6. Helm repositories ----------------------------------
 echo ""
-echo "[6/8] Registering Helm repositories..."
+echo "[6/10] Registering Helm repositories..."
 
 declare -A HELM_REPOS=(
   [ingress-nginx]="https://kubernetes.github.io/ingress-nginx"
@@ -169,7 +169,7 @@ helm repo list
 
 # ---- 7. Node.js 20 + portless ---------------------------------
 echo ""
-echo "[7/8] Installing Node.js 20 and portless..."
+echo "[7/10] Installing Node.js 20 and portless..."
 
 # Configure NodeSource Node.js 20 apt repo with pinned GPG key
 . /etc/os-release

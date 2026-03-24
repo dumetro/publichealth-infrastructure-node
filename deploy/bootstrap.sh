@@ -169,7 +169,7 @@ helm repo list
 
 # ---- 7. Node.js 20 + portless ---------------------------------
 echo ""
-echo "[7/10] Installing Node.js 20 and portless..."
+echo "[7/8] Installing Node.js 20 and portless..."
 # NodeSource LTS repo for Ubuntu
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y -q nodejs

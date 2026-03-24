@@ -4,6 +4,43 @@ set -e
 CONFIG_FILE="config/env-config.yaml"
 NAMESPACE=$(yq e '.global.namespace' $CONFIG_FILE)
 
+# ---- Preflight: verify required Helm repos are registered ----
+REQUIRED_REPOS=(
+  ingress-nginx
+  prometheus-community
+  bitnami
+  spark-operator
+  trino
+  apache-airflow
+  jupyterhub
+)
+
+MISSING_REPOS=()
+for REPO in "${REQUIRED_REPOS[@]}"; do
+  if ! helm repo list 2>/dev/null | grep -q "^${REPO}[[:space:]]"; then
+    MISSING_REPOS+=("$REPO")
+  fi
+done
+
+if [[ ${#MISSING_REPOS[@]} -gt 0 ]]; then
+  echo "⚠️  Preflight check failed — missing Helm repositories: ${MISSING_REPOS[*]}"
+  echo "   Running deploy/bootstrap.sh to install prerequisites..."
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ $EUID -ne 0 ]]; then
+    echo "   bootstrap.sh requires root. Re-running with sudo..."
+    sudo bash "$SCRIPT_DIR/bootstrap.sh" || {
+      echo "ERROR: bootstrap.sh failed. Please fix the errors above and re-run deploy/deploy-node.sh."
+      exit 1
+    }
+  else
+    bash "$SCRIPT_DIR/bootstrap.sh" || {
+      echo "ERROR: bootstrap.sh failed. Please fix the errors above and re-run deploy/deploy-node.sh."
+      exit 1
+    }
+  fi
+  echo "   Bootstrap complete. Resuming deployment..."
+fi
+
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
 # 1. Gateway

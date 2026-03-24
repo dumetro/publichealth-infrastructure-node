@@ -89,7 +89,11 @@ declare -a SERVICES=(
 )
 
 # ---- Start port-forward + portless pairs -------------------
-rm -f "$PID_FILE"
+if [[ -f "$PID_FILE" ]]; then
+  echo "ERROR: PID file $PID_FILE already exists. Is the dev proxy already running?"
+  echo "       Run 'bash deploy/dev-proxy.sh stop' before starting a new instance."
+  exit 1
+fi
 touch "$PID_FILE"
 
 echo ""

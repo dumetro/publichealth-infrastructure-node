@@ -187,8 +187,9 @@ apt-get install -y -q nodejs
 echo "  -> $(node --version)  npm $(npm --version)"
 
 # Install portless globally — must NOT be a project dependency
-npm install -g portless
-echo "  -> portless $(portless --version 2>/dev/null || echo 'installed')"
+PORTLESS_VERSION="1.2.3"  # Pinned known-good version; update intentionally as needed
+npm install -g "portless@${PORTLESS_VERSION}"
+echo "  -> portless ${PORTLESS_VERSION} (binary: $(portless --version 2>/dev/null || echo 'installed'))"
 
 # Persist portless proxy auto-start for the calling user's login shell.
 # portless proxy start is idempotent; safe to call on subsequent logins.

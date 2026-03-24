@@ -112,7 +112,7 @@ for entry in "${SERVICES[@]}"; do
   # portless wraps the sh subprocess; $PORT is expanded inside sh, not here
   # shellcheck disable=SC2016
   portless "$NAME" sh -c \
-    "kubectl port-forward $SERVICE \$PORT:$REMOTE_PORT -n $NAMESPACE --kubeconfig=$KUBECONFIG" \
+    "kubectl port-forward $SERVICE \$PORT:$REMOTE_PORT -n $NAMESPACE --kubeconfig=\"$KUBECONFIG\"" \
     &>/dev/null &
 
   PROXY_PID=$!

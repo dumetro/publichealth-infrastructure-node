@@ -170,8 +170,19 @@ helm repo list
 # ---- 7. Node.js 20 + portless ---------------------------------
 echo ""
 echo "[7/8] Installing Node.js 20 and portless..."
-# NodeSource LTS repo for Ubuntu
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+
+# Configure NodeSource Node.js 20 apt repo with pinned GPG key
+. /etc/os-release
+DISTRO_CODENAME="${VERSION_CODENAME:-jammy}"
+NODESOURCE_GPG_KEYRING="/usr/share/keyrings/nodesource.gpg"
+
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  | gpg --dearmor -o "$NODESOURCE_GPG_KEYRING"
+
+echo "deb [signed-by=$NODESOURCE_GPG_KEYRING] https://deb.nodesource.com/node_20.x $DISTRO_CODENAME main" \
+  > /etc/apt/sources.list.d/nodesource.list
+
+apt-get update -q
 apt-get install -y -q nodejs
 echo "  -> $(node --version)  npm $(npm --version)"
 

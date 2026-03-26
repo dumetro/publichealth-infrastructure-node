@@ -1,5 +1,5 @@
 grafana:
-  adminPassword: "SecureGrafanaPassword123!"
+  adminPassword: "CHANGEME"
   ingress:
     enabled: true
     hosts:

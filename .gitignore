@@ -12,3 +12,14 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Local secret overrides
+config/values/jupyterhub-values.local.yaml
+.env.local
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan

@@ -1,0 +1,13 @@
+# Copy this file to terraform.tfvars and set secure values locally.
+# Never commit terraform.tfvars to source control.
+
+kubeconfig_path = "~/.kube/config"
+namespace       = "data-stack"
+domain          = "health-node.local"
+minio_root_user = "admin"
+
+minio_root_password      = "replace-with-strong-password"
+unity_catalog_admin_token = "replace-with-unity-catalog-token"
+grafana_admin_password   = "replace-with-grafana-admin-password"
+
+deploy_optional_local_charts = false

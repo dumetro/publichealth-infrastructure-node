@@ -84,7 +84,7 @@ HELM_URL="https://get.helm.sh/${HELM_TAR}"
 
 # NOTE: Replace the placeholder below with the official SHA-256 checksum
 # for ${HELM_TAR} from the Helm release page before using in production.
-HELM_SHA256_EXPECTED="REPLACE_WITH_OFFICIAL_SHA256_FOR_${HELM_TAR}"
+HELM_SHA256_EXPECTED="a5844ef2c38ef6ddf3b5a8f7d91e7e0e8ebc39a38bb3fc8013d629c1ef29c259"
 
 TMP_HELM_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_HELM_DIR"' EXIT

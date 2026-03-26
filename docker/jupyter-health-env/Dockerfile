@@ -1,10 +1,10 @@
-FROM jupyter/pyspark-notebook:spark-3.5.0
+FROM quay.io/jupyter/pyspark-notebook:spark-3.5.0
 
 USER root
 RUN apt-get update && apt-get install -y libgdal-dev libproj-dev g++ && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 USER ${NB_UID}
-RUN pip install --no-cache-dir geopandas shapers folium statsmodels scipy pyerf epidemiology mlflow boto3 pyarrow delta-spark get-py-info
+RUN pip install --no-cache-dir geopandas shapely folium statsmodels scipy mlflow boto3 pyarrow delta-spark
 
 RUN mkdir -p /usr/local/spark/jars && \
     wget https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.0/iceberg-spark-runtime-3.5_2.12-1.5.0.jar -P /usr/local/spark/jars/ && \

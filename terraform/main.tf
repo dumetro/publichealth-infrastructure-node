@@ -1,6 +1,7 @@
 locals {
   unity_chart_exists  = fileexists("${path.module}/../charts/unity-catalog/Chart.yaml")
   mlflow_chart_exists = fileexists("${path.module}/../charts/mlflow/Chart.yaml")
+  pgbouncer_app_md5   = "md5${md5(join("", [var.postgres_app_password, var.postgres_app_user]))}"
 
   trino_iceberg_catalog = <<-EOT
     connector.name=iceberg
@@ -59,6 +60,20 @@ resource "kubernetes_secret" "unity_catalog_creds" {
   type = "Opaque"
 }
 
+resource "kubernetes_secret" "postgres_creds" {
+  metadata {
+    name      = "postgres-creds"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  data = {
+    postgres-password = var.postgres_superuser_password
+    app-password      = var.postgres_app_password
+  }
+
+  type = "Opaque"
+}
+
 resource "helm_release" "ingress_nginx" {
   name       = "ingress-nginx"
   repository = "https://kubernetes.github.io/ingress-nginx"
@@ -112,6 +127,352 @@ resource "helm_release" "minio" {
   depends_on = [kubernetes_namespace.data_stack]
 }
 
+resource "helm_release" "postgresql" {
+  name       = "postgresql"
+  repository = "https://charts.bitnami.com/bitnami"
+  chart      = "postgresql"
+  namespace  = kubernetes_namespace.data_stack.metadata[0].name
+
+  values = [
+    file("${path.module}/../config/values/postgres-values.yaml")
+  ]
+
+  set {
+    name  = "image.repository"
+    value = var.postgres_image_repository
+  }
+
+  set {
+    name  = "image.tag"
+    value = var.postgres_image_tag
+  }
+
+  set {
+    name  = "auth.username"
+    value = var.postgres_app_user
+  }
+
+  set {
+    name  = "auth.database"
+    value = var.postgres_database
+  }
+
+  set_sensitive {
+    name  = "auth.postgresPassword"
+    value = var.postgres_superuser_password
+  }
+
+  set_sensitive {
+    name  = "auth.password"
+    value = var.postgres_app_password
+  }
+
+  set {
+    name  = "primary.persistence.storageClass"
+    value = var.storage_class
+  }
+
+  set {
+    name  = "primary.persistence.size"
+    value = var.postgres_persistence_size
+  }
+
+  depends_on = [
+    kubernetes_namespace.data_stack,
+    kubernetes_secret.postgres_creds,
+  ]
+}
+
+resource "kubernetes_secret" "pgbouncer_users" {
+  metadata {
+    name      = "pgbouncer-users"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  data = {
+    "userlist.txt" = "\"${var.postgres_app_user}\" \"${local.pgbouncer_app_md5}\"\n"
+  }
+
+  type = "Opaque"
+}
+
+resource "kubernetes_config_map" "pgbouncer_config" {
+  metadata {
+    name      = "pgbouncer-config"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  data = {
+    "pgbouncer.ini" = <<-EOT
+      [databases]
+      * = host=postgresql.${var.namespace}.svc.cluster.local port=5432
+
+      [pgbouncer]
+      listen_addr = 0.0.0.0
+      listen_port = 5432
+      auth_type = md5
+      auth_file = /etc/pgbouncer/userlist.txt
+      pool_mode = ${var.pgbouncer_pool_mode}
+      max_client_conn = ${var.pgbouncer_max_client_conn}
+      default_pool_size = ${var.pgbouncer_default_pool_size}
+      reserve_pool_size = ${var.pgbouncer_reserve_pool_size}
+      server_reset_query = DISCARD ALL
+      ignore_startup_parameters = extra_float_digits
+      admin_users = ${var.postgres_app_user}
+      stats_users = ${var.postgres_app_user}
+    EOT
+  }
+}
+
+resource "kubernetes_deployment" "pgbouncer" {
+  metadata {
+    name      = "pgbouncer"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+    labels = {
+      app = "pgbouncer"
+    }
+  }
+
+  spec {
+    replicas = 2
+
+    selector {
+      match_labels = {
+        app = "pgbouncer"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "pgbouncer"
+        }
+      }
+
+      spec {
+        container {
+          name              = "pgbouncer"
+          image             = "edoburu/pgbouncer:1.23.1"
+          image_pull_policy = "IfNotPresent"
+          command           = ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
+
+          port {
+            container_port = 5432
+            name           = "pgbouncer"
+          }
+
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
+
+          volume_mount {
+            name       = "pgbouncer-config"
+            mount_path = "/etc/pgbouncer/pgbouncer.ini"
+            sub_path   = "pgbouncer.ini"
+          }
+
+          volume_mount {
+            name       = "pgbouncer-users"
+            mount_path = "/etc/pgbouncer/userlist.txt"
+            sub_path   = "userlist.txt"
+          }
+        }
+
+        volume {
+          name = "pgbouncer-config"
+          config_map {
+            name = kubernetes_config_map.pgbouncer_config.metadata[0].name
+          }
+        }
+
+        volume {
+          name = "pgbouncer-users"
+          secret {
+            secret_name = kubernetes_secret.pgbouncer_users.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    helm_release.postgresql,
+    kubernetes_config_map.pgbouncer_config,
+    kubernetes_secret.pgbouncer_users,
+  ]
+}
+
+resource "kubernetes_service" "pgbouncer" {
+  metadata {
+    name      = "pgbouncer"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  spec {
+    selector = {
+      app = "pgbouncer"
+    }
+
+    port {
+      name        = "pgbouncer"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+
+  depends_on = [kubernetes_deployment.pgbouncer]
+}
+
+resource "kubernetes_persistent_volume_claim" "postgres_backups" {
+  metadata {
+    name      = "postgres-backups"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = {
+        storage = var.postgres_backup_pvc_size
+      }
+    }
+  }
+
+  depends_on = [kubernetes_namespace.data_stack]
+}
+
+resource "kubernetes_job_v1" "postgres_enable_extensions" {
+  metadata {
+    name      = "postgres-enable-extensions"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      spec {
+        restart_policy = "OnFailure"
+
+        container {
+          name              = "postgres-enable-extensions"
+          image             = "${var.postgres_image_repository}:${var.postgres_image_tag}"
+          image_pull_policy = "IfNotPresent"
+          command = [
+            "/bin/bash",
+            "-ec",
+            <<-EOT
+              set -euo pipefail
+              psql -v ON_ERROR_STOP=1 -h postgresql.${var.namespace}.svc.cluster.local -U postgres -d "${var.postgres_database}" -c "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS vector;"
+            EOT
+          ]
+
+          env {
+            name = "PGPASSWORD"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.postgres_creds.metadata[0].name
+                key  = "postgres-password"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  depends_on = [
+    helm_release.postgresql,
+    kubernetes_secret.postgres_creds,
+  ]
+}
+
+resource "kubernetes_cron_job_v1" "postgres_backup" {
+  metadata {
+    name      = "postgres-backup"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  spec {
+    schedule                      = var.postgres_backup_schedule
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = var.postgres_backup_history_limit
+    failed_jobs_history_limit     = 3
+
+    job_template {
+      spec {
+        template {
+          spec {
+            restart_policy = "OnFailure"
+
+            container {
+              name              = "postgres-backup"
+              image             = "${var.postgres_image_repository}:${var.postgres_image_tag}"
+              image_pull_policy = "IfNotPresent"
+              command = [
+                "/bin/bash",
+                "-ec",
+                <<-EOT
+                  set -euo pipefail
+                  timestamp="$(date +%Y%m%d-%H%M%S)"
+                  backup_dir="/backups/${var.postgres_database}"
+                  mkdir -p "$backup_dir"
+                  pg_dump -h postgresql.${var.namespace}.svc.cluster.local -U postgres -d "${var.postgres_database}" -Fc > "$backup_dir/${var.postgres_database}-${timestamp}.dump"
+                  pg_dumpall -h postgresql.${var.namespace}.svc.cluster.local -U postgres --globals-only > "$backup_dir/globals-${timestamp}.sql"
+                  find "$backup_dir" -type f -mtime +"${var.postgres_backup_retention_days}" -delete
+                EOT
+              ]
+
+              env {
+                name = "PGPASSWORD"
+
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.postgres_creds.metadata[0].name
+                    key  = "postgres-password"
+                  }
+                }
+              }
+
+              volume_mount {
+                name       = "postgres-backups"
+                mount_path = "/backups"
+              }
+            }
+
+            volume {
+              name = "postgres-backups"
+
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.postgres_backups.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    helm_release.postgresql,
+    kubernetes_job_v1.postgres_enable_extensions,
+    kubernetes_persistent_volume_claim.postgres_backups,
+    kubernetes_secret.postgres_creds,
+  ]
+}
+
 resource "helm_release" "spark_operator" {
   name       = "spark-operator"
   repository = "https://kubeflow.github.io/spark-operator"
@@ -122,7 +483,10 @@ resource "helm_release" "spark_operator" {
     file("${path.module}/../config/values/spark-values.yaml")
   ]
 
-  depends_on = [kubernetes_namespace.data_stack]
+  depends_on = [
+    kubernetes_namespace.data_stack,
+    helm_release.postgresql,
+  ]
 }
 
 resource "helm_release" "trino" {

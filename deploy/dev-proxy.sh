@@ -85,6 +85,8 @@ declare -a SERVICES=(
   "airflow.health-node     data-stack    svc/airflow-webserver                 8080"
   "mlflow.health-node      data-stack    svc/mlflow                            5000"
   "trino.health-node       data-stack    svc/trino                             8080"
+  "pgbouncer.health-node   data-stack    svc/pgbouncer                         5432"
+  "postgres.health-node    data-stack    svc/postgresql                        5432"
   "prometheus.health-node  monitoring    svc/monitoring-kube-prometheus-stack  9090"
 )
 

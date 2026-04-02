@@ -14,10 +14,20 @@ if [[ -z "$UC_TOKEN" ]]; then
   UC_TOKEN="$(yq e '.unity_catalog.admin_token' "$CONFIG_FILE")"
 fi
 
-for required in MINIO_PASS UC_TOKEN; do
+POSTGRES_SUPERUSER_PASSWORD="${POSTGRES_SUPERUSER_PASSWORD:-}"
+if [[ -z "$POSTGRES_SUPERUSER_PASSWORD" ]]; then
+  POSTGRES_SUPERUSER_PASSWORD="$(yq e '.postgres.superuserPassword' "$CONFIG_FILE")"
+fi
+
+POSTGRES_APP_PASSWORD="${POSTGRES_APP_PASSWORD:-}"
+if [[ -z "$POSTGRES_APP_PASSWORD" ]]; then
+  POSTGRES_APP_PASSWORD="$(yq e '.postgres.appPassword' "$CONFIG_FILE")"
+fi
+
+for required in MINIO_PASS UC_TOKEN POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD; do
   if [[ -z "${!required}" || "${!required}" == "CHANGEME" ]]; then
     echo "ERROR: Required secret '$required' is missing."
-    echo "Set MINIO_ROOT_PASSWORD and UNITY_CATALOG_ADMIN_TOKEN environment variables."
+    echo "Set MINIO_ROOT_PASSWORD, UNITY_CATALOG_ADMIN_TOKEN, POSTGRES_SUPERUSER_PASSWORD, and POSTGRES_APP_PASSWORD."
     exit 1
   fi
 done
@@ -35,6 +45,12 @@ kubectl create secret generic minio-creds \
 kubectl create secret generic unity-catalog-creds \
   --namespace "$NAMESPACE" \
   --from-literal=access-token="$UC_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic postgres-creds \
+  --namespace "$NAMESPACE" \
+  --from-literal=postgres-password="$POSTGRES_SUPERUSER_PASSWORD" \
+  --from-literal=app-password="$POSTGRES_APP_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "✅ Secrets provisioned."

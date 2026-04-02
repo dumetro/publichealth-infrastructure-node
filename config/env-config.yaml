@@ -3,6 +3,29 @@ global:
   storageClass: "local-path"
   namespace: "data-stack"
 
+postgres:
+  image:
+    repository: "postgres-health-ext"
+    tag: "16"
+  database: "health_node"
+  appUser: "health_app"
+  # Set POSTGRES_SUPERUSER_PASSWORD and POSTGRES_APP_PASSWORD in your shell before deploy.
+  superuserPassword: "CHANGEME"
+  appPassword: "CHANGEME"
+  persistence:
+    size: "50Gi"
+  backup:
+    schedule: "0 2 * * *"
+    retentionDays: 7
+    historyLimit: 5
+    pvcSize: "20Gi"
+
+pgbouncer:
+  poolMode: "transaction"
+  maxClientConn: 500
+  defaultPoolSize: 40
+  reservePoolSize: 10
+
 minio:
   rootUser: "admin"
   # Set MINIO_ROOT_PASSWORD in your shell before deploy; never commit real secrets.

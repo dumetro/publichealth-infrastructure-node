@@ -1,0 +1,29 @@
+architecture: standalone
+
+image:
+  registry: docker.io
+  repository: postgres-health-ext
+  tag: "16"
+  pullPolicy: IfNotPresent
+
+auth:
+  username: health_app
+  database: health_node
+
+primary:
+  persistence:
+    enabled: true
+    storageClass: local-path
+    size: 50Gi
+
+  extendedConfiguration: |
+    shared_preload_libraries = 'pg_stat_statements'
+
+  initdb:
+    scripts:
+      00-enable-extensions.sql: |
+        CREATE EXTENSION IF NOT EXISTS postgis;
+        CREATE EXTENSION IF NOT EXISTS vector;
+
+volumePermissions:
+  enabled: true

@@ -118,8 +118,33 @@ INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-echo "  Waiting for control-plane node to become Ready (timeout: 120s)..."
-kubectl wait node --all --for=condition=Ready --timeout=300s
+K3S_READY_TIMEOUT_SECONDS="${K3S_READY_TIMEOUT_SECONDS:-600}"
+echo "  Waiting for control plane to become Ready (timeout: ${K3S_READY_TIMEOUT_SECONDS}s)..."
+
+# Wait for API responsiveness first; kubectl wait can fail early while API startup is still in progress.
+API_READY_DEADLINE=$((SECONDS + K3S_READY_TIMEOUT_SECONDS))
+until kubectl get nodes >/dev/null 2>&1; do
+  if (( SECONDS >= API_READY_DEADLINE )); then
+    echo "ERROR: Kubernetes API did not become responsive within ${K3S_READY_TIMEOUT_SECONDS}s."
+    echo "k3s service status:"
+    systemctl --no-pager -l status k3s || true
+    echo "Recent k3s logs:"
+    journalctl -u k3s -n 80 --no-pager || true
+    exit 1
+  fi
+  sleep 5
+done
+
+if ! kubectl wait node --all --for=condition=Ready --timeout="${K3S_READY_TIMEOUT_SECONDS}s"; then
+  echo "ERROR: Control plane node did not reach Ready within ${K3S_READY_TIMEOUT_SECONDS}s."
+  echo "Current node status:"
+  kubectl get nodes -o wide || true
+  echo "k3s service status:"
+  systemctl --no-pager -l status k3s || true
+  echo "Recent k3s logs:"
+  journalctl -u k3s -n 80 --no-pager || true
+  exit 1
+fi
 echo "  -> Cluster ready"
 kubectl get nodes -o wide
 

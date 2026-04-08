@@ -121,11 +121,26 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 K3S_READY_TIMEOUT_SECONDS="${K3S_READY_TIMEOUT_SECONDS:-600}"
 echo "  Waiting for control plane to become Ready (timeout: ${K3S_READY_TIMEOUT_SECONDS}s)..."
 
-# Wait for API responsiveness first; kubectl wait can fail early while API startup is still in progress.
+# Wait for API responsiveness first.
 API_READY_DEADLINE=$((SECONDS + K3S_READY_TIMEOUT_SECONDS))
-until kubectl get nodes >/dev/null 2>&1; do
+until kubectl get --raw='/readyz' >/dev/null 2>&1; do
   if (( SECONDS >= API_READY_DEADLINE )); then
     echo "ERROR: Kubernetes API did not become responsive within ${K3S_READY_TIMEOUT_SECONDS}s."
+    echo "k3s service status:"
+    systemctl --no-pager -l status k3s || true
+    echo "Recent k3s logs:"
+    journalctl -u k3s -n 80 --no-pager || true
+    exit 1
+  fi
+  sleep 5
+done
+
+# Wait until at least one Node resource exists before waiting on condition=Ready.
+until [[ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]]; do
+  if (( SECONDS >= API_READY_DEADLINE )); then
+    echo "ERROR: Kubernetes API became reachable, but no nodes were registered within ${K3S_READY_TIMEOUT_SECONDS}s."
+    echo "Current node status:"
+    kubectl get nodes -o wide || true
     echo "k3s service status:"
     systemctl --no-pager -l status k3s || true
     echo "Recent k3s logs:"

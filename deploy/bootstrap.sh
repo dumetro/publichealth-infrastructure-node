@@ -118,8 +118,8 @@ INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-K3S_READY_TIMEOUT_SECONDS="${K3S_READY_TIMEOUT_SECONDS:-600}"
-echo "  Waiting for control plane to become Ready (timeout: ${K3S_READY_TIMEOUT_SECONDS}s)..."
+K3S_READY_TIMEOUT_SECONDS="${K3S_READY_TIMEOUT_SECONDS:-1200}"
+echo "  Waiting for control plane to become Ready (script will timeout in: ${K3S_READY_TIMEOUT_SECONDS}s)..."
 
 # Wait for API responsiveness first; kubectl wait can fail early while API startup is still in progress.
 API_READY_DEADLINE=$((SECONDS + K3S_READY_TIMEOUT_SECONDS))

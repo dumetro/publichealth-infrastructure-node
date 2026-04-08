@@ -40,6 +40,24 @@ variable "grafana_admin_password" {
   sensitive   = true
 }
 
+variable "airflow_fernet_key" {
+  description = "Airflow Fernet key used to encrypt connection metadata."
+  type        = string
+  sensitive   = true
+}
+
+variable "airflow_webserver_secret_key" {
+  description = "Airflow webserver secret key for session signing."
+  type        = string
+  sensitive   = true
+}
+
+variable "airflow_admin_password" {
+  description = "Password for the default Airflow admin user."
+  type        = string
+  sensitive   = true
+}
+
 variable "minio_buckets" {
   description = "Buckets to create in MinIO."
   type        = list(string)

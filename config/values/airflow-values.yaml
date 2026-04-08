@@ -1,0 +1,105 @@
+# Airflow orchestration configuration — Public Health AI Node
+# Secrets are sourced from the pre-created Kubernetes secret `airflow-secrets`.
+# If you use Vault or External Secrets, populate the same secret name/keys instead of
+# committing values here.
+
+executor: KubernetesExecutor
+
+defaultAirflowRepository: apache/airflow
+defaultAirflowTag: "3.1.8"
+
+images:
+  useDefaultImageForMigration: true
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+pgbouncer:
+  enabled: false
+
+statsd:
+  enabled: false
+
+rbac:
+  create: true
+
+extraPipPackages:
+  - apache-airflow-providers-apache-spark
+
+config:
+  core:
+    load_examples: "False"
+  kubernetes_executor:
+    namespace: data-stack
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "False"
+
+env:
+  - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+    valueFrom:
+      secretKeyRef:
+        name: airflow-secrets
+        key: sql_alchemy_conn
+  - name: AIRFLOW__CORE__FERNET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: airflow-secrets
+        key: fernet_key
+  - name: AIRFLOW__WEBSERVER__SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: airflow-secrets
+        key: webserver_secret_key
+
+webserver:
+  service:
+    type: ClusterIP
+  defaultUser:
+    enabled: false
+
+scheduler:
+  replicas: 1
+
+triggerer:
+  enabled: true
+  replicas: 1
+
+createUserJob:
+  enabled: true
+  useHelmHooks: false
+  applyCustomEnv: true
+  command:
+    - bash
+    - -ec
+  args:
+    - |
+      airflow users create \
+        --role "${AIRFLOW_ADMIN_ROLE:-Admin}" \
+        --username "${AIRFLOW_ADMIN_USERNAME}" \
+        --email "${AIRFLOW_ADMIN_EMAIL}" \
+        --firstname "${AIRFLOW_ADMIN_FIRSTNAME}" \
+        --lastname "${AIRFLOW_ADMIN_LASTNAME}" \
+        --password "${AIRFLOW_ADMIN_PASSWORD}"
+  env:
+    - name: AIRFLOW_ADMIN_USERNAME
+      value: admin
+    - name: AIRFLOW_ADMIN_EMAIL
+      value: admin@example.com
+    - name: AIRFLOW_ADMIN_FIRSTNAME
+      value: Airflow
+    - name: AIRFLOW_ADMIN_LASTNAME
+      value: Admin
+    - name: AIRFLOW_ADMIN_ROLE
+      value: Admin
+    - name: AIRFLOW_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: airflow-secrets
+          key: admin_password
+
+ingress:
+  web:
+    enabled: false

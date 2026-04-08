@@ -1,3 +1,6 @@
+# Spark operator configuration — keep runtime credentials in SparkApplication secrets
+# or Vault/External Secrets, not in this committed values file.
+
 spark:
   jobNamespaces:
     - data-stack

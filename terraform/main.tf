@@ -74,6 +74,22 @@ resource "kubernetes_secret" "postgres_creds" {
   type = "Opaque"
 }
 
+resource "kubernetes_secret" "airflow_secrets" {
+  metadata {
+    name      = "airflow-secrets"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  data = {
+    sql_alchemy_conn     = "postgresql+psycopg2://${urlencode(var.postgres_app_user)}:${urlencode(var.postgres_app_password)}@pgbouncer.${var.namespace}.svc.cluster.local:5432/${var.postgres_database}"
+    fernet_key           = var.airflow_fernet_key
+    webserver_secret_key = var.airflow_webserver_secret_key
+    admin_password       = var.airflow_admin_password
+  }
+
+  type = "Opaque"
+}
+
 resource "helm_release" "ingress_nginx" {
   name       = "ingress-nginx"
   repository = "https://kubernetes.github.io/ingress-nginx"
@@ -513,7 +529,16 @@ resource "helm_release" "airflow" {
   chart      = "airflow"
   namespace  = kubernetes_namespace.data_stack.metadata[0].name
 
-  depends_on = [kubernetes_namespace.data_stack]
+  values = [
+    file("${path.module}/../config/values/airflow-values.yaml")
+  ]
+
+  depends_on = [
+    kubernetes_namespace.data_stack,
+    kubernetes_secret.airflow_secrets,
+    kubernetes_secret.postgres_creds,
+    kubernetes_service.pgbouncer,
+  ]
 }
 
 resource "helm_release" "jupyterhub" {

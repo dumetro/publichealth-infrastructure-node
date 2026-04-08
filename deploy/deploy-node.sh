@@ -300,7 +300,8 @@ helm upgrade --install trino trino/trino \
 
 # 7. Orchestration
 helm upgrade --install airflow apache-airflow/airflow \
-  --namespace "$NAMESPACE"
+  --namespace "$NAMESPACE" \
+  -f config/values/airflow-values.yaml
 
 # 8. ML & Workspace
 if [[ -d "./charts/mlflow" ]]; then

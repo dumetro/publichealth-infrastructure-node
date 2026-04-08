@@ -22,7 +22,19 @@ export UNITY_CATALOG_ADMIN_TOKEN='replace-with-unity-catalog-token'
 export GRAFANA_ADMIN_PASSWORD='replace-with-grafana-admin-password'
 export POSTGRES_SUPERUSER_PASSWORD='replace-with-postgres-superuser-password'
 export POSTGRES_APP_PASSWORD='replace-with-postgres-app-password'
+export AIRFLOW_FERNET_KEY='replace-with-airflow-fernet-key'
+export AIRFLOW_WEBSERVER_SECRET_KEY='replace-with-airflow-webserver-secret-key'
+export AIRFLOW_ADMIN_PASSWORD='replace-with-airflow-admin-password'
 ```
+
+If you use Vault or an external secret controller, you can provision the Kubernetes secret
+`airflow-secrets` out-of-band instead of exporting the Airflow variables above. The secret
+must contain these keys:
+
+- `sql_alchemy_conn`
+- `fernet_key`
+- `webserver_secret_key`
+- `admin_password`
 
 PostgreSQL stack (new)
 
@@ -78,11 +90,67 @@ Notes:
 
 - Local charts are optional. If charts/unity-catalog or charts/mlflow are missing, deploy-node.sh skips those releases with a warning.
 - Spark operator now uses config/values/spark-values.yaml.
+- Airflow now uses config/values/airflow-values.yaml.
+- Airflow and Spark run as separate Helm releases and separate Kubernetes workloads.
+- Airflow installs the Spark provider package `apache-airflow-providers-apache-spark` during deployment.
+- Airflow secrets are read from the Kubernetes secret `airflow-secrets`; this can be created by deploy/setup-secrets.sh or synced from Vault/External Secrets.
 - Trino Unity Catalog token is injected at deploy time from UNITY_CATALOG_ADMIN_TOKEN.
 - Bootstrap now also builds and imports a local PostgreSQL image with postgis + pgvector into k3s containerd.
 - Dev proxy now includes routes for Postgres and PgBouncer:
 	- `postgres.health-node.localhost:1355`
 	- `pgbouncer.health-node.localhost:1355`
+
+Airflow + Spark integration
+
+- Spark provider installation is currently handled in deployment via `config/values/airflow-values.yaml` using:
+	- `extraPipPackages: [apache-airflow-providers-apache-spark]`
+- This means Airflow pods install the provider at startup. In restricted/offline environments, its recommended to use a custom Airflow image with the provider pre-baked and set that image in Airflow values.
+
+Verify provider installation after deploy
+
+```bash
+kubectl exec -n data-stack deployment/airflow-scheduler -- \
+	python -c "import airflow.providers.apache.spark; print('spark provider ok')"
+```
+
+How Airflow communicates with Spark jobs in this repo
+
+- Spark workloads are submitted as Kubernetes `SparkApplication` resources (`sparkoperator.k8s.io/v1beta2`), for example in `scripts/etl/silver-etl-job.yaml`.
+- Airflow should create/update those `SparkApplication` resources via Kubernetes API (not by talking to a standalone Spark master service).
+- Spark Operator watches the CRDs and creates driver/executor pods.
+- Airflow then monitors `SparkApplication` status and marks task success/failure.
+
+RBAC needed for Airflow to submit SparkApplication resources
+
+Apply a Role/RoleBinding for the Airflow service account used to run task pods:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+	name: airflow-spark-submit
+	namespace: data-stack
+rules:
+	- apiGroups: ["sparkoperator.k8s.io"]
+		resources: ["sparkapplications", "sparkapplications/status"]
+		verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+	name: airflow-spark-submit
+	namespace: data-stack
+subjects:
+	- kind: ServiceAccount
+		name: airflow-worker
+		namespace: data-stack
+roleRef:
+	apiGroup: rbac.authorization.k8s.io
+	kind: Role
+	name: airflow-spark-submit
+```
+
+Replace `airflow-worker` with the service account used by your Airflow task pods.
 
 Terraform alternative
 
@@ -103,3 +171,4 @@ Terraform notes:
 - Terraform does not replace OS bootstrap tasks (apt installs, k3s install, Docker image build/import).
 - Terraform now includes PostgreSQL and PgBouncer resources. Ensure local PostgreSQL image `postgres-health-ext:16` is built and imported before `terraform apply`.
 - Terraform also creates the `postgres-backups` PVC and `postgres-backup` CronJob using the same local-path persistence model.
+- Terraform also provisions the `airflow-secrets` secret from variables and deploys Airflow with config/values/airflow-values.yaml.

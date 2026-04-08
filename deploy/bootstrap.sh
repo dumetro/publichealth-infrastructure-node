@@ -114,6 +114,29 @@ if [[ ! -s "$K3S_INSTALL_SCRIPT" ]]; then
   exit 1
 fi
 chmod 700 "$K3S_INSTALL_SCRIPT"
+
+# Pre-flight: stop any existing k3s instance so ports 10248/10250 are free before install.
+# This handles re-runs and stale processes from previous failed bootstraps.
+if systemctl is-active --quiet k3s 2>/dev/null; then
+  echo "  -> Stopping existing k3s service before (re)install..."
+  systemctl stop k3s
+fi
+# Kill any surviving k3s processes that systemd did not reap
+pkill -TERM -f '/usr/local/bin/k3s' 2>/dev/null || true
+# Wait up to 30s for ports 10248 and 10250 to be released
+_port_wait=0
+until ! ss -tlnp 2>/dev/null | grep -qE ':10248|:10250'; do
+  if (( _port_wait >= 30 )); then
+    echo "WARNING: Ports 10248/10250 still in use after 30s — forcing SIGKILL"
+    pkill -KILL -f '/usr/local/bin/k3s' 2>/dev/null || true
+    sleep 2
+    break
+  fi
+  sleep 1
+  (( _port_wait++ ))
+done
+unset _port_wait
+
 INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "$K3S_INSTALL_SCRIPT"
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml

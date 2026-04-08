@@ -133,7 +133,7 @@ until ! ss -tlnp 2>/dev/null | grep -qE ':10248|:10250'; do
     break
   fi
   sleep 1
-  (( _port_wait++ ))
+  (( _port_wait++ )) || true
 done
 unset _port_wait
 

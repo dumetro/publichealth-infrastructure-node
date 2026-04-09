@@ -117,9 +117,14 @@ chmod 700 "$K3S_INSTALL_SCRIPT"
 
 # Pre-flight: stop any existing k3s instance so ports 10248/10250 are free before install.
 # This handles re-runs and stale processes from previous failed bootstraps.
-if systemctl is-active --quiet k3s 2>/dev/null; then
-  echo "  -> Stopping existing k3s service before (re)install..."
-  systemctl stop k3s
+echo "  -> Stopping and resetting any existing k3s service state before (re)install..."
+systemctl stop k3s 2>/dev/null || true
+systemctl kill --kill-who=all k3s 2>/dev/null || true
+systemctl reset-failed k3s 2>/dev/null || true
+
+# Use installer helper when present to clean up stale k3s/containerd networking state.
+if [[ -x /usr/local/bin/k3s-killall.sh ]]; then
+  /usr/local/bin/k3s-killall.sh || true
 fi
 # Kill any surviving k3s processes that systemd did not reap
 pkill -TERM -f '/usr/local/bin/k3s' 2>/dev/null || true

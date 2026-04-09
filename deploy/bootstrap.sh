@@ -130,13 +130,29 @@ if [[ -x /usr/local/bin/k3s-killall.sh ]]; then
 fi
 # Kill any surviving k3s processes that systemd did not reap
 pkill -TERM -f '/usr/local/bin/k3s' 2>/dev/null || true
+pkill -TERM -x kubelet 2>/dev/null || true
 # Wait up to 30s for ports 10248 and 10250 to be released
 _port_wait=0
 until ! ss -tlnp 2>/dev/null | grep -qE ':10248|:10250'; do
   if (( _port_wait >= 30 )); then
     echo "WARNING: Ports 10248/10250 still in use after 30s — forcing SIGKILL"
     pkill -KILL -f '/usr/local/bin/k3s' 2>/dev/null || true
+    pkill -KILL -x kubelet 2>/dev/null || true
+
+    # Kill whichever process actually owns the listener sockets.
+    LISTENER_PIDS="$(ss -tlnp 2>/dev/null | awk '/:10248|:10250/ {print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | sort -u)"
+    if [[ -n "$LISTENER_PIDS" ]]; then
+      for pid in $LISTENER_PIDS; do
+        kill -9 "$pid" 2>/dev/null || true
+      done
+    fi
     sleep 2
+    if ss -tlnp 2>/dev/null | grep -qE ':10248|:10250'; then
+      echo "ERROR: Ports 10248/10250 are still occupied after forced cleanup."
+      ss -tlnp 2>/dev/null | grep -E ':10248|:10250' || true
+      echo "Refusing to continue because k3s will fail to start while kubelet ports are busy."
+      exit 1
+    fi
     break
   fi
   sleep 1
@@ -155,7 +171,13 @@ fi
 INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "$K3S_INSTALL_SCRIPT"
 systemctl daemon-reload
 systemctl reset-failed k3s 2>/dev/null || true
-systemctl restart k3s
+if ! systemctl restart k3s; then
+  echo "ERROR: systemctl restart k3s failed immediately after install."
+  systemctl --no-pager -l status k3s || true
+  echo "Last 120 k3s logs:"
+  journalctl -u k3s -n 120 --no-pager || true
+  exit 1
+fi
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 

@@ -117,6 +117,8 @@ chmod 700 "$K3S_INSTALL_SCRIPT"
 
 # Pre-flight: stop any existing k3s instance so ports 10248/10250 are free before install.
 # This handles re-runs and stale processes from previous failed bootstraps.
+# Set K3S_RESET_STATE=true for destructive cleanup of prior cluster state (fresh single-node init).
+K3S_RESET_STATE="${K3S_RESET_STATE:-false}"
 echo "  -> Stopping and resetting any existing k3s service state before (re)install..."
 systemctl stop k3s 2>/dev/null || true
 systemctl kill --kill-who=all k3s 2>/dev/null || true
@@ -142,7 +144,18 @@ until ! ss -tlnp 2>/dev/null | grep -qE ':10248|:10250'; do
 done
 unset _port_wait
 
+if [[ "$K3S_RESET_STATE" == "true" ]]; then
+  echo "  -> K3S_RESET_STATE=true: removing previous k3s datastore for a clean bootstrap"
+  if [[ -x /usr/local/bin/k3s-uninstall.sh ]]; then
+    /usr/local/bin/k3s-uninstall.sh || true
+  fi
+  rm -rf /var/lib/rancher/k3s /etc/rancher/k3s /var/lib/kubelet /var/lib/cni /etc/cni/net.d
+fi
+
 INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik" "$K3S_INSTALL_SCRIPT"
+systemctl daemon-reload
+systemctl reset-failed k3s 2>/dev/null || true
+systemctl restart k3s
 # k3s writes its kubeconfig to /etc/rancher/k3s/k3s.yaml
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
@@ -157,8 +170,14 @@ until kubectl version --short >/dev/null 2>&1; do
     echo "ERROR: Kubernetes API did not respond successfully within ${K3S_READY_TIMEOUT_SECONDS}s."
     echo "k3s service status:"
     systemctl --no-pager -l status k3s || true
+    echo "RBAC/bootstrap readiness diagnostics (last 200 lines):"
+    journalctl -u k3s -n 200 --no-pager | grep -E 'rbac/bootstrap-roles|readyz check failed|Kubelet failed to wait for apiserver ready|runtime core not ready|Failed to retrieve node info' || true
     echo "Last 100 k3s logs:"
     journalctl -u k3s -n 100 --no-pager || true
+    if journalctl -u k3s -n 400 --no-pager | grep -q 'poststarthook/rbac/bootstrap-roles failed'; then
+      echo "HINT: Detected persistent RBAC bootstrap hook failure."
+      echo "      Re-run with a clean datastore: K3S_RESET_STATE=true sudo bash deploy/bootstrap.sh"
+    fi
     exit 1
   fi
   sleep 5

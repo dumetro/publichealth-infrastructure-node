@@ -261,6 +261,11 @@ echo "  -> kubeconfig written to $KUBE_DIR/config"
 echo ""
 echo "[6/11] Registering Helm repositories..."
 
+# Chart source mapping used by deploy/deploy-node.sh:
+# - MinIO + PostgreSQL use Bitnami charts (repo key: bitnami)
+# - Grafana is deployed as a subchart of kube-prometheus-stack (repo key: prometheus-community)
+# - MLflow uses a local chart path (./charts/mlflow), so no remote repo entry is required
+
 declare -A HELM_REPOS=(
   [ingress-nginx]="https://kubernetes.github.io/ingress-nginx"
   [prometheus-community]="https://prometheus-community.github.io/helm-charts"

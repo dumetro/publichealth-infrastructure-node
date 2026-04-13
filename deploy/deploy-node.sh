@@ -88,8 +88,9 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
-  --set-string auth.rootPassword="$MINIO_ROOT_PASSWORD" \
-  --set-string defaultBuckets="$(yq e '.minio.buckets[]' "$CONFIG_FILE" | paste -sd,)"
+  --set-string auth.rootPassword="$MINIO_ROOT_PASSWORD"
+# NOTE: Buckets are not created automatically at deploy time.
+# Create them manually after deploy: mc mb local/raw local/standard local/published
 
 # 4. Database
 helm upgrade --install postgresql bitnami/postgresql \

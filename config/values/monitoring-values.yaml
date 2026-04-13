@@ -3,7 +3,7 @@ grafana:
   ingress:
     enabled: true
     hosts:
-      - grafana.health-node.local
+      - grafana.dakar-datasphere-node.local
   persistence:
     enabled: true
     storageClassName: local-path

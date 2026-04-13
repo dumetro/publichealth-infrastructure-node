@@ -29,11 +29,11 @@ if ! kubectl cluster-info --request-timeout=5s &>/dev/null; then
 fi
 
 # ---- PID file for lifecycle management ---------------------
-PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/health-node-dev-proxy.pids"
+PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/dakar-datasphere-node-dev-proxy.pids"
 
 stop_all() {
   if [[ -f "$PID_FILE" ]]; then
-    echo "Stopping all health-node dev proxies..."
+    echo "Stopping all dakar-datasphere-node dev proxies..."
     while IFS= read -r pid; do
       if kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null && echo "  -> killed PID $pid"
@@ -78,16 +78,16 @@ portless proxy start 2>/dev/null || true
 # portless injects $PORT as the local listening port;
 # kubectl receives it via: sh -c 'kubectl port-forward ... $PORT:remote'
 declare -a SERVICES=(
-  "grafana.health-node     monitoring    svc/monitoring-grafana                80"
-  "jupyter.health-node     data-stack    svc/proxy-public                      80"
-  "minio.health-node       data-stack    svc/minio                             9001"
-  "minio-api.health-node   data-stack    svc/minio                             9000"
-  "airflow.health-node     data-stack    svc/airflow-webserver                 8080"
-  "mlflow.health-node      data-stack    svc/mlflow                            5000"
-  "trino.health-node       data-stack    svc/trino                             8080"
-  "pgbouncer.health-node   data-stack    svc/pgbouncer                         5432"
-  "postgres.health-node    data-stack    svc/postgresql                        5432"
-  "prometheus.health-node  monitoring    svc/monitoring-kube-prometheus-stack  9090"
+  "grafana.dakar-datasphere-node     monitoring    svc/monitoring-grafana                80"
+  "jupyter.dakar-datasphere-node     data-stack    svc/proxy-public                      80"
+  "minio.dakar-datasphere-node       data-stack    svc/minio                             9001"
+  "minio-api.dakar-datasphere-node   data-stack    svc/minio                             9000"
+  "airflow.dakar-datasphere-node     data-stack    svc/airflow-webserver                 8080"
+  "mlflow.dakar-datasphere-node      data-stack    svc/mlflow                            5000"
+  "trino.dakar-datasphere-node       data-stack    svc/trino                             8080"
+  "pgbouncer.dakar-datasphere-node   data-stack    svc/pgbouncer                         5432"
+  "postgres.dakar-datasphere-node    data-stack    svc/postgresql                        5432"
+  "prometheus.dakar-datasphere-node  monitoring    svc/monitoring-kube-prometheus-stack  9090"
 )
 
 # ---- Start port-forward + portless pairs -------------------

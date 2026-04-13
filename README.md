@@ -86,6 +86,127 @@ bash deploy/dev-proxy.sh
 bash tests/validate-node.sh
 ```
 
+## Bootstrap
+
+Bootstrap (`deploy/bootstrap.sh`) is a one-time provisioning step that prepares the OS and cluster before any application workloads are deployed. It must complete successfully before `deploy/deploy-node.sh` is run.
+
+### What bootstrap does
+
+| Step | What it installs / configures |
+|------|-------------------------------|
+| 1 | System packages: curl, wget, ca-certificates, Docker |
+| 2 | yq (YAML processor) |
+| 3 | Helm |
+| 4 | k3s (Kubernetes), waits for API and node Ready |
+| 5 | kubeconfig for the calling user (`~/.kube/config`) |
+| 6 | Helm repositories (ingress-nginx, bitnami, prometheus-community, etc.) |
+| 7 | Node.js 20 and portless reverse proxy |
+| 8 | Custom Jupyter image built and imported into k3s containerd |
+| 9 | Custom PostgreSQL image (postgis + pgvector) built and imported |
+| 10 | Kubernetes namespace and secrets (`setup-secrets.sh`) |
+| 11 | portless proxy started on port 1355 |
+
+### What success looks like
+
+When bootstrap completes cleanly you will see:
+
+```
+==================================================
+  Bootstrap complete!
+==================================================
+```
+
+Verify the cluster state before proceeding:
+
+```bash
+# Node is Ready
+kubectl get nodes -o wide
+
+# k3s system pods are Running
+kubectl get pods -n kube-system
+
+# Helm repos registered
+helm repo list
+
+# Custom images are in k3s containerd
+k3s ctr images list | grep -E 'jupyter-health-env|postgres-health-ext'
+
+# Namespace and secrets exist
+kubectl get ns data-stack
+kubectl get secrets -n data-stack
+```
+
+Expected node output:
+
+```
+NAME            STATUS   ROLES                  AGE   VERSION
+who-epr-his-dk  Ready    control-plane,master   2m    v1.30.4+k3s1
+```
+
+### Next steps after bootstrap
+
+Bootstrap only provisions the platform layer. Application workloads are deployed separately:
+
+1. **Export secrets** — required before the next step (see [Required secrets](#required-secrets) above):
+   ```bash
+   export MINIO_ROOT_PASSWORD='...'
+   export POSTGRES_SUPERUSER_PASSWORD='...'
+   # ... (all variables listed in Required secrets section)
+   ```
+
+2. **Deploy application stack:**
+   ```bash
+   bash deploy/deploy-node.sh
+   ```
+
+3. **Start the dev proxy** (maps cluster services to named local URLs):
+   ```bash
+   bash deploy/dev-proxy.sh
+   ```
+
+4. **Run smoke tests:**
+   ```bash
+   bash tests/validate-node.sh
+   ```
+
+### Service endpoints
+
+After `deploy-node.sh` and `dev-proxy.sh` complete, services are reachable via portless (port 1355) from the host machine, and via in-cluster DNS from within pods.
+
+#### Host access (via portless on port 1355)
+
+| Service | URL |
+|---------|-----|
+| JupyterHub | http://jupyter.dakar-datasphere-node.localhost:1355 |
+| Grafana | http://grafana.dakar-datasphere-node.localhost:1355 |
+| Airflow | http://airflow.dakar-datasphere-node.localhost:1355 |
+| MLflow | http://mlflow.dakar-datasphere-node.localhost:1355 |
+| Trino | http://trino.dakar-datasphere-node.localhost:1355 |
+| MinIO | http://minio.dakar-datasphere-node.localhost:1355 |
+| PgBouncer | http://pgbouncer.dakar-datasphere-node.localhost:1355 |
+| PostgreSQL | http://postgres.dakar-datasphere-node.localhost:1355 |
+
+#### In-cluster ingress (add node IP to `/etc/hosts`)
+
+Add the node's IP to `/etc/hosts` (replace `<NODE_IP>` with the output of `hostname -I | awk '{print $1}'`):
+
+```
+<NODE_IP>  jupyter.dakar-datasphere-node.local
+<NODE_IP>  grafana.dakar-datasphere-node.local
+```
+
+| Service | Hostname |
+|---------|----------|
+| JupyterHub | http://jupyter.dakar-datasphere-node.local |
+| Grafana | http://grafana.dakar-datasphere-node.local |
+
+#### In-cluster service DNS (pod-to-pod)
+
+| Service | DNS name | Port |
+|---------|----------|------|
+| PostgreSQL (direct) | `postgresql.data-stack.svc.cluster.local` | 5432 |
+| PostgreSQL (via PgBouncer) | `pgbouncer.data-stack.svc.cluster.local` | 5432 |
+
 Notes:
 
 - Local charts are optional. If charts/unity-catalog or charts/mlflow are missing, deploy-node.sh skips those releases with a warning.
@@ -97,8 +218,8 @@ Notes:
 - Trino Unity Catalog token is injected at deploy time from UNITY_CATALOG_ADMIN_TOKEN.
 - Bootstrap now also builds and imports a local PostgreSQL image with postgis + pgvector into k3s containerd.
 - Dev proxy now includes routes for Postgres and PgBouncer:
-	- `postgres.health-node.localhost:1355`
-	- `pgbouncer.health-node.localhost:1355`
+	- `postgres.dakar-datasphere-node.localhost:1355`
+	- `pgbouncer.dakar-datasphere-node.localhost:1355`
 
 Airflow + Spark integration
 

@@ -1,5 +1,5 @@
 global:
-  domain: health-node.local
+  domain: dakar-datasphere-node.local
   storageClass: "local-path"
   namespace: "data-stack"
 
@@ -38,6 +38,7 @@ unity_catalog:
 
 jupyterhub:
   auth_type: "dummy"
+  hostname: "jupyter.dakar-datasphere-node.local"
 
 mlflow:
   s3_endpoint: "http://minio.data-stack.svc.cluster.local:9000"
@@ -47,6 +48,6 @@ monitoring:
   grafana:
     # Set GRAFANA_ADMIN_PASSWORD in your shell before deploy.
     adminPassword: "CHANGEME"
-    domain: "grafana.health-node.local"
+    domain: "grafana.dakar-datasphere-node.local"
   prometheus:
     retention: "15d"

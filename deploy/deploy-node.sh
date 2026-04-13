@@ -67,8 +67,28 @@ done
 POSTGRES_APP_MD5="md5$(printf "%s%s" "$POSTGRES_APP_PASSWORD" "$POSTGRES_APP_USER" | md5sum | awk '{print $1}')"
 
 TRINO_VALUES_RENDERED="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED"' EXIT
+GRAFANA_SECRET_VALUES="$(mktemp)"
+MINIO_SECRET_VALUES="$(mktemp)"
+POSTGRES_SECRET_VALUES="$(mktemp)"
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
+
 UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
+
+# Write secret values to temp YAML files using yq so any special characters
+# (commas, braces, backslashes, quotes) are safely encoded.
+# --set-string splits on commas and chokes on {}/[] — a -f values file has no such limits.
+yq e -n \
+  '.grafana.adminPassword = strenv("GRAFANA_ADMIN_PASSWORD")' \
+  > "$GRAFANA_SECRET_VALUES"
+
+yq e -n \
+  '.auth.rootPassword = strenv("MINIO_ROOT_PASSWORD")' \
+  > "$MINIO_SECRET_VALUES"
+
+yq e -n \
+  '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
+   .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
+  > "$POSTGRES_SECRET_VALUES"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
@@ -77,7 +97,7 @@ echo "🚀 Initiating Public Health AI Node Deployment..."
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   -f config/values/monitoring-values.yaml \
-  --set-string grafana.adminPassword="$GRAFANA_ADMIN_PASSWORD"
+  -f "$GRAFANA_SECRET_VALUES"
 
 # 2. Gateway — depends on ServiceMonitor CRD from step 1.
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -88,7 +108,7 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
-  --set-string auth.rootPassword="$MINIO_ROOT_PASSWORD"
+  -f "$MINIO_SECRET_VALUES"
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
 
@@ -96,12 +116,11 @@ helm upgrade --install minio bitnami/minio \
 helm upgrade --install postgresql bitnami/postgresql \
   --namespace "$NAMESPACE" \
   -f config/values/postgres-values.yaml \
+  -f "$POSTGRES_SECRET_VALUES" \
   --set-string image.repository="$POSTGRES_IMAGE_REPOSITORY" \
   --set-string image.tag="$POSTGRES_IMAGE_TAG" \
   --set-string auth.username="$POSTGRES_APP_USER" \
   --set-string auth.database="$POSTGRES_DB" \
-  --set-string auth.postgresPassword="$POSTGRES_SUPERUSER_PASSWORD" \
-  --set-string auth.password="$POSTGRES_APP_PASSWORD" \
   --set-string primary.persistence.storageClass="$STORAGE_CLASS" \
   --set-string primary.persistence.size="$POSTGRES_PERSISTENCE_SIZE"
 

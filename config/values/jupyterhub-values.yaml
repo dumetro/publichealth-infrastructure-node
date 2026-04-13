@@ -26,7 +26,7 @@ ingress:
   annotations:
     kubernetes.io/ingress.class: nginx
   hosts:
-    - jupyter.health-node.local
+    - jupyter.dakar-datasphere-node.local
 
 singleuser:
   # Built by bootstrap.sh and imported into k3s containerd

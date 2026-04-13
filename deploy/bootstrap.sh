@@ -38,7 +38,7 @@ echo "=================================================="
 
 # ---- 1. System dependencies --------------------------------
 echo ""
-echo "[1/11] Installing system dependencies..."
+echo "[1/12] Installing system dependencies..."
 apt-get update -q
 apt-get install -y -q \
   curl wget ca-certificates gnupg lsb-release \
@@ -53,7 +53,7 @@ fi
 
 # ---- 2. yq -------------------------------------------------
 echo ""
-echo "[2/11] Installing yq..."
+echo "[2/12] Installing yq..."
 YQ_VERSION="v4.44.3"
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -76,7 +76,7 @@ echo "  -> $(yq --version)"
 
 # ---- 3. Helm -----------------------------------------------
 echo ""
-echo "[3/11] Installing Helm..."
+echo "[3/12] Installing Helm..."
 HELM_VERSION="v3.14.4"
 # $ARCH is already set by the yq step above (uname -m output).
 case "$ARCH" in
@@ -112,7 +112,7 @@ echo "  -> $(helm version --short)"
 
 # ---- 4. k3s ------------------------------------------------
 echo ""
-echo "[4/11] Installing k3s (includes kubectl + local-path StorageClass)..."
+echo "[4/12] Installing k3s (includes kubectl + local-path StorageClass)..."
 # --disable=traefik: project uses ingress-nginx, not Traefik
 # Pin k3s version for reproducible installs; override by setting K3S_VERSION in the environment.
 K3S_VERSION="${K3S_VERSION:-v1.30.4+k3s1}"
@@ -253,7 +253,7 @@ kubectl get nodes -o wide
 
 # ---- 5. kubeconfig for calling user ------------------------
 echo ""
-echo "[5/11] Configuring kubeconfig for $REAL_USER..."
+echo "[5/12] Configuring kubeconfig for $REAL_USER..."
 KUBE_DIR="$REAL_HOME/.kube"
 mkdir -p "$KUBE_DIR"
 cp /etc/rancher/k3s/k3s.yaml "$KUBE_DIR/config"
@@ -269,7 +269,7 @@ echo "  -> kubeconfig written to $KUBE_DIR/config"
 
 # ---- 6. Helm repositories ----------------------------------
 echo ""
-echo "[6/11] Registering Helm repositories..."
+echo "[6/12] Registering Helm repositories..."
 
 # Chart source mapping used by deploy/deploy-node.sh:
 # - MinIO + PostgreSQL use Bitnami charts (repo key: bitnami)
@@ -302,7 +302,7 @@ helm repo list
 
 # ---- 7. Node.js 20 + portless ---------------------------------
 echo ""
-echo "[7/11] Installing Node.js 20 and portless..."
+echo "[7/12] Installing Node.js 20 and portless..."
 
 # Configure NodeSource Node.js 20 apt repo with pinned GPG key.
 # NodeSource unified their repo under the 'nodistro' suite — per-distro codename
@@ -341,7 +341,7 @@ fi
 
 # ---- 8. Build & import custom Jupyter image ----------------
 echo ""
-echo "[8/11] Building custom Jupyter health environment image..."
+echo "[8/12] Building custom Jupyter health environment image..."
 JUPYTER_BUILD_CTX="$PROJECT_ROOT/docker/jupyter-health-env"
 IMAGE_TAG="jupyter-health-env:latest"
 
@@ -355,7 +355,7 @@ echo "  -> Image available in k3s: $IMAGE_TAG"
 
 # ---- 9. Build & import PostgreSQL image with postgis + pgvector ------
 echo ""
-echo "[9/11] Building PostgreSQL image with postgis + pgvector..."
+echo "[9/12] Building PostgreSQL image with postgis + pgvector..."
 POSTGRES_BUILD_CTX="$PROJECT_ROOT/docker/postgres-health-ext"
 POSTGRES_IMAGE_TAG="postgres-health-ext:16"
 
@@ -368,15 +368,40 @@ echo "  -> Image available in k3s: $POSTGRES_IMAGE_TAG"
 
 # ---- 10. Namespace + secrets -------------------------------
 echo ""
-echo "[10/11] Provisioning Kubernetes namespace and secrets..."
+echo "[10/12] Provisioning Kubernetes namespace and secrets..."
 (cd "$PROJECT_ROOT" && bash "$SCRIPT_DIR/setup-secrets.sh")
 
 # ---- 11. Portless proxy initial start ----------------------
 echo ""
-echo "[11/11] Starting portless proxy (port 1355)..."
+echo "[11/12] Starting portless proxy (port 1355)..."
 # Run as the real user — portless stores its state in the user's home dir
 sudo -u "$REAL_USER" portless proxy start 2>/dev/null || true
 echo "  -> portless proxy running on http://*.localhost:1355"
+
+# ---- 12. /etc/hosts — in-cluster ingress hostnames ----------
+echo ""
+echo "[12/12] Updating /etc/hosts with in-cluster ingress hostnames..."
+NODE_IP="$(hostname -I | awk '{print $1}')"
+INGRESS_HOSTS=(
+  "$(yq e '.jupyterhub.hostname'        "$PROJECT_ROOT/config/env-config.yaml")"
+  "$(yq e '.monitoring.grafana.domain'  "$PROJECT_ROOT/config/env-config.yaml")"
+)
+for HOST in "${INGRESS_HOSTS[@]}"; do
+  if grep -qF "$HOST" /etc/hosts; then
+    EXISTING_IP="$(awk "/$HOST/"'{print $1; exit}' /etc/hosts)"
+    if [[ "$EXISTING_IP" == "$NODE_IP" ]]; then
+      echo "  -> $HOST already mapped to $NODE_IP, skipping"
+    else
+      sed -i "/$HOST/d" /etc/hosts
+      echo "$NODE_IP  $HOST" >> /etc/hosts
+      echo "  -> Updated: $HOST  ($EXISTING_IP -> $NODE_IP)"
+    fi
+  else
+    echo "$NODE_IP  $HOST" >> /etc/hosts
+    echo "  -> Added: $NODE_IP  $HOST"
+  fi
+done
+echo "  -> /etc/hosts ready"
 
 # ---- Done --------------------------------------------------
 echo ""
@@ -389,17 +414,17 @@ echo "  1.  bash deploy/deploy-node.sh"
 echo "  2.  bash deploy/dev-proxy.sh      # named local URLs for all k8s services"
 echo ""
 echo "portless service URLs (available after 'bash deploy/dev-proxy.sh'):"
-echo "  http://grafana.health-node.localhost:1355"
-echo "  http://jupyter.health-node.localhost:1355"
-echo "  http://minio.health-node.localhost:1355"
-echo "  http://airflow.health-node.localhost:1355"
-echo "  http://mlflow.health-node.localhost:1355"
-echo "  http://trino.health-node.localhost:1355"
-echo "  http://pgbouncer.health-node.localhost:1355"
-echo "  http://postgres.health-node.localhost:1355"
+echo "  http://grafana.dakar-datasphere-node.localhost:1355"
+echo "  http://jupyter.dakar-datasphere-node.localhost:1355"
+echo "  http://minio.dakar-datasphere-node.localhost:1355"
+echo "  http://airflow.dakar-datasphere-node.localhost:1355"
+echo "  http://mlflow.dakar-datasphere-node.localhost:1355"
+echo "  http://trino.dakar-datasphere-node.localhost:1355"
+echo "  http://pgbouncer.dakar-datasphere-node.localhost:1355"
+echo "  http://postgres.dakar-datasphere-node.localhost:1355"
 echo ""
-echo "In-cluster ingress hostnames (add to /etc/hosts -> $(hostname -I | awk '{print $1}')):"
-echo "  jupyter.health-node.local   — JupyterHub notebook workspace"
-echo "  grafana.health-node.local   — Grafana dashboards"
+echo "In-cluster ingress hostnames (written to /etc/hosts -> $NODE_IP):"
+echo "  jupyter.dakar-datasphere-node.local   — JupyterHub notebook workspace"
+echo "  grafana.dakar-datasphere-node.local   — Grafana dashboards"
 echo ""
 echo "NOTE: Run 'newgrp docker' or re-login for Docker group membership to apply."

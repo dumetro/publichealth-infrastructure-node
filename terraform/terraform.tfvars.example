@@ -3,7 +3,7 @@
 
 kubeconfig_path = "~/.kube/config"
 namespace       = "data-stack"
-domain          = "health-node.local"
+domain          = "dakar-datasphere-node.local"
 minio_root_user = "admin"
 
 minio_root_password      = "replace-with-strong-password"

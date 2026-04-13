@@ -13,7 +13,7 @@ variable "namespace" {
 variable "domain" {
   description = "Base domain for ingress hosts."
   type        = string
-  default     = "health-node.local"
+  default     = "dakar-datasphere-node.local"
 }
 
 variable "minio_root_user" {

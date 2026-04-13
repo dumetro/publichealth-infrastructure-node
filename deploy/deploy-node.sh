@@ -4,6 +4,7 @@ set -euo pipefail
 CONFIG_FILE="config/env-config.yaml"
 NAMESPACE=$(yq e '.global.namespace' "$CONFIG_FILE")
 DOMAIN=$(yq e '.global.domain' "$CONFIG_FILE")
+JUPYTER_HOST=$(yq e '.jupyterhub.hostname' "$CONFIG_FILE")
 STORAGE_CLASS=$(yq e '.global.storageClass' "$CONFIG_FILE")
 
 POSTGRES_IMAGE_REPOSITORY=$(yq e '.postgres.image.repository' "$CONFIG_FILE")
@@ -313,7 +314,7 @@ fi
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \
   -f config/values/jupyterhub-values.yaml \
-  --set-string ingress.hosts[0]="jupyter.${DOMAIN}"
+  --set-string ingress.hosts[0]="${JUPYTER_HOST}"
 
 # 9. Serving
 # Download and apply KServe manifest (pinned version v0.11.0)

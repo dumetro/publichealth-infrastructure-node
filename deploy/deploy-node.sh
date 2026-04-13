@@ -112,28 +112,125 @@ helm upgrade --install minio bitnami/minio \
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
 
-# 4. Database
-helm upgrade --install postgresql bitnami/postgresql \
-  --namespace "$NAMESPACE" \
-  -f config/values/postgres-values.yaml \
-  -f "$POSTGRES_SECRET_VALUES" \
-  --set global.security.allowInsecureImages=true \
-  --set-string image.repository="$POSTGRES_IMAGE_REPOSITORY" \
-  --set-string image.tag="$POSTGRES_IMAGE_TAG" \
-  --set-string auth.username="$POSTGRES_APP_USER" \
-  --set-string auth.database="$POSTGRES_DB" \
-  --set-string primary.persistence.storageClass="$STORAGE_CLASS" \
-  --set-string primary.persistence.size="$POSTGRES_PERSISTENCE_SIZE"
+# 4. Database — deployed as a plain StatefulSet using our custom postgis+pgvector image.
+# The Bitnami postgresql chart expects Bitnami-specific entrypoints that are not present
+# in postgis/postgis-based images, causing init containers to crash and rollout to time out.
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: ${NAMESPACE}
+spec:
+  type: ClusterIP
+  selector:
+    app: postgresql
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: ${NAMESPACE}
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+      app.kubernetes.io/component: primary
+      app.kubernetes.io/instance: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+        app.kubernetes.io/component: primary
+        app.kubernetes.io/instance: postgresql
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgresql
+          image: ${POSTGRES_IMAGE_REPOSITORY}:${POSTGRES_IMAGE_TAG}
+          imagePullPolicy: Never
+          env:
+            - name: POSTGRES_DB
+              value: ${POSTGRES_DB}
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: postgresql-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgresql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: ${STORAGE_CLASS}
+        resources:
+          requests:
+            storage: ${POSTGRES_PERSISTENCE_SIZE}
+EOF
 
-kubectl rollout status statefulset/postgresql -n "$NAMESPACE" --timeout=5m
+kubectl rollout status statefulset/postgresql -n "$NAMESPACE" --timeout=10m
 
 POSTGRES_POD="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=primary,app.kubernetes.io/instance=postgresql -o jsonpath='{.items[0].metadata.name}')"
 if [[ -z "$POSTGRES_POD" ]]; then
-  echo "ERROR: Unable to find PostgreSQL primary pod to enable extensions"
+  echo "ERROR: Unable to find PostgreSQL primary pod"
   exit 1
 fi
 
-kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- sh -ec "PGPASSWORD='$POSTGRES_SUPERUSER_PASSWORD' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -c \"CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS vector;\""
+# Create app user, grant privileges, and enable extensions.
+# Write a temporary SQL file into the pod to avoid shell quoting complexity with passwords.
+PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.postgres-password}' | base64 -d)"
+PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
+
+TMP_INIT_SQL="$(mktemp)"
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
+cat > "$TMP_INIT_SQL" <<ENDSQL
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
+    CREATE USER "${POSTGRES_APP_USER}" WITH PASSWORD '${PGPASSWORD_APP}';
+  END IF;
+END \$\$;
+GRANT ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" TO "${POSTGRES_APP_USER}";
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS vector;
+ENDSQL
+
+kubectl cp "$TMP_INIT_SQL" "$NAMESPACE/$POSTGRES_POD:/tmp/init.sql"
+kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
+  sh -ec "PGPASSWORD='$PGPASSWORD_SUPERUSER' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -f /tmp/init.sql && rm /tmp/init.sql"
 
 cat <<EOF | kubectl apply -f -
 apiVersion: v1

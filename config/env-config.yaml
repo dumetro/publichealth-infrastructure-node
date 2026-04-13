@@ -30,7 +30,10 @@ minio:
   rootUser: "admin"
   # Set MINIO_ROOT_PASSWORD in your shell before deploy; never commit real secrets.
   rootPassword: "CHANGEME"
-  buckets: ["raw", "standard", "published"]
+  buckets:
+    - raw
+    - standard
+    - published
 
 unity_catalog:
   # Set UNITY_CATALOG_ADMIN_TOKEN in your shell before deploy.

@@ -39,6 +39,9 @@ echo "=================================================="
 # ---- 1. System dependencies --------------------------------
 echo ""
 echo "[1/12] Installing system dependencies..."
+# Remove any stale NodeSource apt source written by a previous bootstrap run.
+# If left in place, apt-get update fails here before step 7 can overwrite it.
+rm -f /etc/apt/sources.list.d/nodesource.list
 apt-get update -q
 apt-get install -y -q \
   curl wget ca-certificates gnupg lsb-release \

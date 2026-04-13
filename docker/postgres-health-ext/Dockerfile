@@ -1,16 +1,7 @@
 FROM postgis/postgis:16-3.4
 
-ARG PGVECTOR_VERSION=v0.8.0
-
-# Build and install pgvector so both postgis and vector extensions are available.
+# Install pgvector from the PGDG apt repo (already configured in the base image).
+# Using the apt package avoids a full build-tools chain and is more reliable in CI/bootstrap.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      build-essential \
-      ca-certificates \
-      git \
-      postgresql-server-dev-16 \
-    && git clone --branch "${PGVECTOR_VERSION}" --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
-    && make -C /tmp/pgvector \
-    && make -C /tmp/pgvector install \
-    && apt-get purge -y --auto-remove build-essential git postgresql-server-dev-16 \
-    && rm -rf /tmp/pgvector /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends postgresql-16-pgvector \
+    && rm -rf /var/lib/apt/lists/*

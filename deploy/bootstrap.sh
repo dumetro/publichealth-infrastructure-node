@@ -36,6 +36,9 @@ echo "  Public Health AI Node — Bootstrap"
 echo "  Ubuntu $UBUNTU_MAJOR detected | User: $REAL_USER"
 echo "=================================================="
 
+# Detect architecture once — used by yq, Helm, and docker buildx install steps.
+ARCH="$(uname -m)"
+
 # ---- 1. System dependencies --------------------------------
 echo ""
 echo "[1/12] Installing system dependencies..."
@@ -54,11 +57,28 @@ if [[ "$REAL_USER" != "root" ]]; then
   echo "  -> Added $REAL_USER to the 'docker' group (re-login required to take effect)"
 fi
 
+# Ensure docker buildx plugin is present — required for BuildKit builds.
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "  -> docker buildx not found, installing..."
+  BUILDX_VERSION="v0.17.1"
+  case "$ARCH" in
+    x86_64|amd64)  BUILDX_ARCH="amd64" ;;
+    aarch64|arm64) BUILDX_ARCH="arm64" ;;
+    *) echo "ERROR: Unsupported architecture for docker buildx: $ARCH"; exit 1 ;;
+  esac
+  mkdir -p /usr/local/lib/docker/cli-plugins
+  curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDX_ARCH}" \
+    -o /usr/local/lib/docker/cli-plugins/docker-buildx
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+  echo "  -> $(docker buildx version)"
+else
+  echo "  -> docker buildx already installed: $(docker buildx version)"
+fi
+
 # ---- 2. yq -------------------------------------------------
 echo ""
 echo "[2/12] Installing yq..."
 YQ_VERSION="v4.44.3"
-ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64)
     YQ_ARCH="amd64"
@@ -349,7 +369,7 @@ echo "[8/12] Building custom Jupyter health environment image..."
 JUPYTER_BUILD_CTX="$PROJECT_ROOT/docker/jupyter-health-env"
 IMAGE_TAG="jupyter-health-env:latest"
 
-DOCKER_BUILDKIT=0 docker build -t "$IMAGE_TAG" "$JUPYTER_BUILD_CTX"
+DOCKER_BUILDKIT=1 docker build -t "$IMAGE_TAG" "$JUPYTER_BUILD_CTX"
 echo "  -> Image built: $IMAGE_TAG"
 
 # Import into k3s containerd so pods can pull with imagePullPolicy: Never
@@ -363,7 +383,7 @@ echo "[9/12] Building PostgreSQL image with postgis + pgvector..."
 POSTGRES_BUILD_CTX="$PROJECT_ROOT/docker/postgres-health-ext"
 POSTGRES_IMAGE_TAG="postgres-health-ext:16"
 
-DOCKER_BUILDKIT=0 docker build -t "$POSTGRES_IMAGE_TAG" "$POSTGRES_BUILD_CTX"
+DOCKER_BUILDKIT=1 docker build -t "$POSTGRES_IMAGE_TAG" "$POSTGRES_BUILD_CTX"
 echo "  -> Image built: $POSTGRES_IMAGE_TAG"
 
 echo "  -> Importing image into k3s containerd runtime..."

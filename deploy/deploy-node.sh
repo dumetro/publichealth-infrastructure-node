@@ -68,7 +68,7 @@ POSTGRES_APP_MD5="md5$(printf "%s%s" "$POSTGRES_APP_PASSWORD" "$POSTGRES_APP_USE
 
 TRINO_VALUES_RENDERED="$(mktemp)"
 trap 'rm -f "$TRINO_VALUES_RENDERED"' EXIT
-sed "s|<your-uc-access-token>|${UC_ACCESS_TOKEN}|g" config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
+UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 

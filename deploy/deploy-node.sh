@@ -89,7 +89,7 @@ helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   --set-string auth.rootPassword="$MINIO_ROOT_PASSWORD" \
-  --set-string defaultBuckets="$(yq e '.minio.buckets | join(",")' "$CONFIG_FILE")"
+  --set-string defaultBuckets="$(yq e '.minio.buckets[]' "$CONFIG_FILE" | paste -sd,)"
 
 # 4. Database
 helm upgrade --install postgresql bitnami/postgresql \

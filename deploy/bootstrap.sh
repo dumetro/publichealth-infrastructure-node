@@ -349,7 +349,7 @@ echo "[8/12] Building custom Jupyter health environment image..."
 JUPYTER_BUILD_CTX="$PROJECT_ROOT/docker/jupyter-health-env"
 IMAGE_TAG="jupyter-health-env:latest"
 
-docker build -t "$IMAGE_TAG" "$JUPYTER_BUILD_CTX"
+DOCKER_BUILDKIT=1 docker build -t "$IMAGE_TAG" "$JUPYTER_BUILD_CTX"
 echo "  -> Image built: $IMAGE_TAG"
 
 # Import into k3s containerd so pods can pull with imagePullPolicy: Never
@@ -363,7 +363,7 @@ echo "[9/12] Building PostgreSQL image with postgis + pgvector..."
 POSTGRES_BUILD_CTX="$PROJECT_ROOT/docker/postgres-health-ext"
 POSTGRES_IMAGE_TAG="postgres-health-ext:16"
 
-docker build -t "$POSTGRES_IMAGE_TAG" "$POSTGRES_BUILD_CTX"
+DOCKER_BUILDKIT=1 docker build -t "$POSTGRES_IMAGE_TAG" "$POSTGRES_BUILD_CTX"
 echo "  -> Image built: $POSTGRES_IMAGE_TAG"
 
 echo "  -> Importing image into k3s containerd runtime..."

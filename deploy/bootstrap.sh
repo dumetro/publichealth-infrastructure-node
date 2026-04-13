@@ -311,6 +311,7 @@ echo "[7/12] Installing Node.js 20 and portless..."
 # NodeSource unified their repo under the 'nodistro' suite — per-distro codename
 # paths (e.g. jammy, noble) are no longer published and return 404.
 NODESOURCE_GPG_KEYRING="/usr/share/keyrings/nodesource.gpg"
+rm -f "$NODESOURCE_GPG_KEYRING"
 
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
   | gpg --dearmor -o "$NODESOURCE_GPG_KEYRING"
@@ -323,7 +324,7 @@ apt-get install -y -q nodejs
 echo "  -> $(node --version)  npm $(npm --version)"
 
 # Install portless globally — must NOT be a project dependency
-PORTLESS_VERSION="1.2.3"  # Pinned known-good version; update intentionally as needed
+PORTLESS_VERSION="0.10.1"  # Pinned known-good version; update intentionally as needed
 npm install -g "portless@${PORTLESS_VERSION}"
 echo "  -> portless ${PORTLESS_VERSION} (binary: $(portless --version 2>/dev/null || echo 'installed'))"
 

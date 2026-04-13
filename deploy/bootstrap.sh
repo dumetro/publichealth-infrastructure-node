@@ -2,7 +2,12 @@
 # ============================================================
 # Public Health AI Node — Bootstrap (Ubuntu 22+)
 # Run ONCE before deploy/deploy-node.sh.
-# Usage: sudo bash deploy/bootstrap.sh
+# Usage: sudo -E bash deploy/bootstrap.sh
+#
+# The -E flag is required so that sudo preserves the calling
+# user's exported environment variables (secrets). Without it,
+# sudo strips the environment and step 10 (setup-secrets.sh)
+# will fail with "Required secret is missing".
 # ============================================================
 set -euo pipefail
 
@@ -12,9 +17,37 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # --- Privilege check ---
 if [[ $EUID -ne 0 ]]; then
   echo "ERROR: This script must be run as root or with sudo."
-  echo "Usage: sudo bash deploy/bootstrap.sh"
+  echo "Usage: sudo -E bash deploy/bootstrap.sh"
   exit 1
 fi
+
+# --- Pre-flight: verify required secrets are present before spending time on earlier steps ---
+echo "Checking required secrets..."
+MISSING_SECRETS=()
+for var in MINIO_ROOT_PASSWORD UNITY_CATALOG_ADMIN_TOKEN POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD AIRFLOW_FERNET_KEY AIRFLOW_WEBSERVER_SECRET_KEY AIRFLOW_ADMIN_PASSWORD; do
+  if [[ -z "${!var:-}" ]]; then
+    MISSING_SECRETS+=("$var")
+  fi
+done
+if [[ ${#MISSING_SECRETS[@]} -gt 0 ]]; then
+  echo "ERROR: The following required secrets are not set in the environment:"
+  for var in "${MISSING_SECRETS[@]}"; do
+    echo "  - $var"
+  done
+  echo ""
+  echo "Export them before running bootstrap:"
+  echo "  export MINIO_ROOT_PASSWORD='...'"
+  echo "  export UNITY_CATALOG_ADMIN_TOKEN='...'"
+  echo "  export POSTGRES_SUPERUSER_PASSWORD='...'"
+  echo "  export POSTGRES_APP_PASSWORD='...'"
+  echo "  export AIRFLOW_FERNET_KEY='...'"
+  echo "  export AIRFLOW_WEBSERVER_SECRET_KEY='...'"
+  echo "  export AIRFLOW_ADMIN_PASSWORD='...'"
+  echo ""
+  echo "Then re-run with: sudo -E bash deploy/bootstrap.sh"
+  exit 1
+fi
+echo "  -> All required secrets present"
 
 # Determine the calling (non-root) user for home-dir setup
 REAL_USER="${SUDO_USER:-root}"

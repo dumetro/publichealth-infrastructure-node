@@ -72,16 +72,17 @@ UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
-# 1. Gateway
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-basic --create-namespace \
-  -f config/values/ingress-values.yaml
-
-# 2. Monitoring Stack
+# 1. Monitoring Stack — deployed first so Prometheus Operator CRDs (ServiceMonitor etc.)
+# are available before ingress-nginx tries to create a ServiceMonitor resource.
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   -f config/values/monitoring-values.yaml \
   --set-string grafana.adminPassword="$GRAFANA_ADMIN_PASSWORD"
+
+# 2. Gateway — depends on ServiceMonitor CRD from step 1.
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-basic --create-namespace \
+  -f config/values/ingress-values.yaml
 
 # 3. Storage
 helm upgrade --install minio bitnami/minio \

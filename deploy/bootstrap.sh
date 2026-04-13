@@ -187,7 +187,7 @@ K3S_NODE_REGISTRATION_TIMEOUT="${K3S_NODE_REGISTRATION_TIMEOUT:-1800}"
 echo "  Waiting for control plane ready (API: ${K3S_READY_TIMEOUT_SECONDS}s, node registration: ${K3S_NODE_REGISTRATION_TIMEOUT}s)..."
 echo "  [Phase 1/3] Waiting for Kubernetes API HTTP 200..."
 API_READY_DEADLINE=$((SECONDS + K3S_READY_TIMEOUT_SECONDS))
-until kubectl version --short >/dev/null 2>&1; do
+until kubectl get --raw='/readyz' 2>/dev/null | grep -q 'ok'; do
   if (( SECONDS >= API_READY_DEADLINE )); then
     echo "ERROR: Kubernetes API did not respond successfully within ${K3S_READY_TIMEOUT_SECONDS}s."
     echo "k3s service status:"

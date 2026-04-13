@@ -117,6 +117,7 @@ helm upgrade --install postgresql bitnami/postgresql \
   --namespace "$NAMESPACE" \
   -f config/values/postgres-values.yaml \
   -f "$POSTGRES_SECRET_VALUES" \
+  --set global.security.allowInsecureImages=true \
   --set-string image.repository="$POSTGRES_IMAGE_REPOSITORY" \
   --set-string image.tag="$POSTGRES_IMAGE_TAG" \
   --set-string auth.username="$POSTGRES_APP_USER" \

@@ -115,6 +115,17 @@ helm upgrade --install minio bitnami/minio \
 # 4. Database — deployed as a plain StatefulSet using our custom postgis+pgvector image.
 # The Bitnami postgresql chart expects Bitnami-specific entrypoints that are not present
 # in postgis/postgis-based images, causing init containers to crash and rollout to time out.
+#
+# Delete any existing postgresql StatefulSet before applying — Kubernetes forbids in-place
+# updates to volumeClaimTemplates and selector fields (e.g. leftover from a failed Bitnami
+# install). The PVC is preserved so data survives across re-deploys.
+if kubectl get statefulset postgresql -n "$NAMESPACE" >/dev/null 2>&1; then
+  echo "  -> Removing existing postgresql StatefulSet (PVC preserved)..."
+  kubectl delete statefulset postgresql -n "$NAMESPACE" --cascade=orphan
+fi
+# Also uninstall any leftover Bitnami helm release for postgresql
+helm uninstall postgresql -n "$NAMESPACE" 2>/dev/null || true
+
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Service

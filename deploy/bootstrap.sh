@@ -78,18 +78,28 @@ echo "  -> $(yq --version)"
 echo ""
 echo "[3/11] Installing Helm..."
 HELM_VERSION="v3.14.4"
-HELM_ARCH="linux-amd64"
+# $ARCH is already set by the yq step above (uname -m output).
+case "$ARCH" in
+  x86_64|amd64)
+    HELM_ARCH="linux-amd64"
+    HELM_SHA256_EXPECTED="a5844ef2c38ef6ddf3b5a8f7d91e7e0e8ebc39a38bb3fc8013d629c1ef29c259"
+    ;;
+  aarch64|arm64)
+    HELM_ARCH="linux-arm64"
+    HELM_SHA256_EXPECTED="113ccc6a5d44b47a41f3d1ebae8a7f40a38be4aee36619b44c77ead9c4b73c61"
+    ;;
+  *)
+    echo "ERROR: Unsupported architecture for Helm: $ARCH"
+    exit 1
+    ;;
+esac
 HELM_TAR="helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
 HELM_URL="https://get.helm.sh/${HELM_TAR}"
-
-# NOTE: Replace the placeholder below with the official SHA-256 checksum
-# for ${HELM_TAR} from the Helm release page before using in production.
-HELM_SHA256_EXPECTED="a5844ef2c38ef6ddf3b5a8f7d91e7e0e8ebc39a38bb3fc8013d629c1ef29c259"
 
 TMP_HELM_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_HELM_DIR"' EXIT
 
-echo "  -> Downloading Helm ${HELM_VERSION} from ${HELM_URL}..."
+echo "  -> Downloading Helm ${HELM_VERSION} (${HELM_ARCH}) from ${HELM_URL}..."
 curl -fsSL -o "${TMP_HELM_DIR}/${HELM_TAR}" "${HELM_URL}"
 
 echo "  -> Verifying Helm archive checksum..."
@@ -97,7 +107,7 @@ echo "${HELM_SHA256_EXPECTED}  ${TMP_HELM_DIR}/${HELM_TAR}" | sha256sum -c -
 
 echo "  -> Installing Helm binary to /usr/local/bin/helm..."
 tar -xzf "${TMP_HELM_DIR}/${HELM_TAR}" -C "${TMP_HELM_DIR}"
-install -m 0755 "${TMP_HELM_DIR}/linux-amd64/helm" /usr/local/bin/helm
+install -m 0755 "${TMP_HELM_DIR}/${HELM_ARCH}/helm" /usr/local/bin/helm
 echo "  -> $(helm version --short)"
 
 # ---- 4. k3s ------------------------------------------------
@@ -294,15 +304,15 @@ helm repo list
 echo ""
 echo "[7/11] Installing Node.js 20 and portless..."
 
-# Configure NodeSource Node.js 20 apt repo with pinned GPG key
-. /etc/os-release
-DISTRO_CODENAME="${VERSION_CODENAME:-jammy}"
+# Configure NodeSource Node.js 20 apt repo with pinned GPG key.
+# NodeSource unified their repo under the 'nodistro' suite — per-distro codename
+# paths (e.g. jammy, noble) are no longer published and return 404.
 NODESOURCE_GPG_KEYRING="/usr/share/keyrings/nodesource.gpg"
 
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
   | gpg --dearmor -o "$NODESOURCE_GPG_KEYRING"
 
-echo "deb [signed-by=$NODESOURCE_GPG_KEYRING] https://deb.nodesource.com/node_20.x $DISTRO_CODENAME main" \
+echo "deb [signed-by=$NODESOURCE_GPG_KEYRING] https://deb.nodesource.com/node_20.x nodistro main" \
   > /etc/apt/sources.list.d/nodesource.list
 
 apt-get update -q
@@ -359,7 +369,7 @@ echo "  -> Image available in k3s: $POSTGRES_IMAGE_TAG"
 # ---- 10. Namespace + secrets -------------------------------
 echo ""
 echo "[10/11] Provisioning Kubernetes namespace and secrets..."
-bash "$SCRIPT_DIR/setup-secrets.sh"
+(cd "$PROJECT_ROOT" && bash "$SCRIPT_DIR/setup-secrets.sh")
 
 # ---- 11. Portless proxy initial start ----------------------
 echo ""

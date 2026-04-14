@@ -29,6 +29,21 @@ rbac:
 extraPipPackages:
   - apache-airflow-providers-apache-spark
 
+# Wire secrets via the chart's dedicated fields — avoids duplicate env var warnings
+# that occur when the same var is set by both config: and extraEnv:.
+fernetKey:
+  secretName: airflow-secrets
+  secretKey: fernet_key
+
+webserverSecretKey:
+  secretName: airflow-secrets
+  secretKey: webserver_secret_key
+
+data:
+  metadataConnection:
+    existingSecret: airflow-secrets
+    existingSecretKey: sql_alchemy_conn
+
 config:
   core:
     load_examples: "False"
@@ -37,25 +52,8 @@ config:
     delete_worker_pods: "True"
     delete_worker_pods_on_failure: "False"
 
-# The Airflow chart's top-level `env` only accepts {name, value} pairs.
-# `valueFrom` (secretKeyRef) is only valid under `extraEnv`, which passes full
-# Kubernetes env var specs to all Airflow component pods.
+# Only inject vars not already covered by fernetKey/webserverSecretKey/data above.
 extraEnv: |
-  - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-    valueFrom:
-      secretKeyRef:
-        name: airflow-secrets
-        key: sql_alchemy_conn
-  - name: AIRFLOW__CORE__FERNET_KEY
-    valueFrom:
-      secretKeyRef:
-        name: airflow-secrets
-        key: fernet_key
-  - name: AIRFLOW__WEBSERVER__SECRET_KEY
-    valueFrom:
-      secretKeyRef:
-        name: airflow-secrets
-        key: webserver_secret_key
   - name: AIRFLOW_ADMIN_PASSWORD
     valueFrom:
       secretKeyRef:
@@ -102,8 +100,6 @@ createUserJob:
       value: Admin
     - name: AIRFLOW_ADMIN_ROLE
       value: Admin
-    - name: AIRFLOW_ADMIN_PASSWORD
-      value: "placeholder-overridden-by-extraEnv"
 
 ingress:
   web:

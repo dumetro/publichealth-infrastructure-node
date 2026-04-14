@@ -462,9 +462,27 @@ helm upgrade --install trino trino/trino \
   -f "$TRINO_VALUES_RENDERED"
 
 # 7. Orchestration
-helm upgrade --install airflow apache-airflow/airflow \
+if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
-  -f config/values/airflow-values.yaml
+  -f config/values/airflow-values.yaml \
+  --timeout 10m; then
+  echo ""
+  echo "ERROR: Airflow Helm install timed out. Diagnostics:"
+  echo ""
+  echo "--- Pod status ---"
+  kubectl get pods -n "$NAMESPACE" -l release=airflow -o wide || true
+  echo ""
+  echo "--- Pod events (all recent) ---"
+  kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | grep -i 'airflow\|Back\|Error\|Failed\|OOM\|Kill' | tail -30 || true
+  echo ""
+  echo "--- Logs from failing pods ---"
+  for pod in $(kubectl get pods -n "$NAMESPACE" -l release=airflow --field-selector=status.phase!=Running -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "  >> $pod"
+    kubectl logs "$pod" -n "$NAMESPACE" --all-containers --tail=40 2>/dev/null || true
+    echo ""
+  done
+  exit 1
+fi
 
 # 8. ML & Workspace
 if [[ -d "./charts/mlflow" ]]; then

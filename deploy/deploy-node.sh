@@ -428,14 +428,14 @@ spec:
                 - -ec
                 - |
                   set -euo pipefail
-                  timestamp="$(date +%Y%m%d-%H%M%S)"
-                  backup_dir="/backups/${POSTGRES_DB}"
-                  mkdir -p "$backup_dir"
-                  pg_dump -h postgresql.${NAMESPACE}.svc.cluster.local -U postgres -d "$POSTGRES_DB" -Fc \
-                    > "$backup_dir/${POSTGRES_DB}-${timestamp}.dump"
+                  timestamp="\$(date +%Y%m%d-%H%M%S)"
+                  backup_dir="/backups/\${POSTGRES_DB}"
+                  mkdir -p "\$backup_dir"
+                  pg_dump -h postgresql.${NAMESPACE}.svc.cluster.local -U postgres -d "\$POSTGRES_DB" -Fc \
+                    > "\$backup_dir/\${POSTGRES_DB}-\${timestamp}.dump"
                   pg_dumpall -h postgresql.${NAMESPACE}.svc.cluster.local -U postgres --globals-only \
-                    > "$backup_dir/globals-${timestamp}.sql"
-                  find "$backup_dir" -type f -mtime +"$RETENTION_DAYS" -delete
+                    > "\$backup_dir/globals-\${timestamp}.sql"
+                  find "\$backup_dir" -type f -mtime +"\$RETENTION_DAYS" -delete
               volumeMounts:
                 - name: postgres-backups
                   mountPath: /backups

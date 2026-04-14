@@ -70,7 +70,8 @@ TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
 POSTGRES_SECRET_VALUES="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
+AIRFLOW_SECRET_VALUES="$(mktemp)"
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_SECRET_VALUES"' EXIT
 
 UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
 
@@ -89,6 +90,13 @@ yq e -n \
   '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
    .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
   > "$POSTGRES_SECRET_VALUES"
+
+# Airflow metadata DB password — injected via data.metadataConnection.pass so the chart
+# generates the correct AIRFLOW__DATABASE__SQL_ALCHEMY_CONN (pointing at pgbouncer) rather
+# than defaulting to the postgresql subchart service (airflow-postgresql.data-stack).
+yq e -n \
+  '.data.metadataConnection.pass = strenv("POSTGRES_APP_PASSWORD")' \
+  > "$AIRFLOW_SECRET_VALUES"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
@@ -262,7 +270,7 @@ PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jso
 PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
 
 TMP_INIT_SQL="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
@@ -473,6 +481,7 @@ helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
 if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
   -f config/values/airflow-values.yaml \
+  -f "$AIRFLOW_SECRET_VALUES" \
   --timeout 10m; then
   echo ""
   echo "ERROR: Airflow Helm install timed out. Diagnostics:"

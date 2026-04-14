@@ -462,6 +462,11 @@ helm upgrade --install trino trino/trino \
   -f "$TRINO_VALUES_RENDERED"
 
 # 7. Orchestration
+# Uninstall any existing Airflow release before installing — previous installs may have
+# baked in the chart's default DB connection (airflow-postgresql.data-stack) if the
+# secret env vars failed to apply. A fresh install guarantees our extraEnv takes effect.
+helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
+
 if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
   -f config/values/airflow-values.yaml \

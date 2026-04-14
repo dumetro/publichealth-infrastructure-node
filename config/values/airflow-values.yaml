@@ -37,7 +37,10 @@ config:
     delete_worker_pods: "True"
     delete_worker_pods_on_failure: "False"
 
-env:
+# The Airflow chart's top-level `env` only accepts {name, value} pairs.
+# `valueFrom` (secretKeyRef) is only valid under `extraEnv`, which passes full
+# Kubernetes env var specs to all Airflow component pods.
+extraEnv: |
   - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
     valueFrom:
       secretKeyRef:
@@ -53,6 +56,11 @@ env:
       secretKeyRef:
         name: airflow-secrets
         key: webserver_secret_key
+  - name: AIRFLOW_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: airflow-secrets
+        key: admin_password
 
 webserver:
   service:
@@ -95,10 +103,7 @@ createUserJob:
     - name: AIRFLOW_ADMIN_ROLE
       value: Admin
     - name: AIRFLOW_ADMIN_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: airflow-secrets
-          key: admin_password
+      value: "placeholder-overridden-by-extraEnv"
 
 ingress:
   web:

@@ -105,8 +105,17 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   -f config/values/ingress-values.yaml
 
 # 3. Storage
+# Bitnami minio images require a paid subscription since Aug 2025 — override with the
+# official quay.io/minio/minio image which is freely available.
 helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
+  --set global.security.allowInsecureImages=true \
+  --set-string image.registry="quay.io" \
+  --set-string image.repository="minio/minio" \
+  --set-string image.tag="latest" \
+  --set-string clientImage.registry="quay.io" \
+  --set-string clientImage.repository="minio/mc" \
+  --set-string clientImage.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   -f "$MINIO_SECRET_VALUES"
 # NOTE: Buckets are not created automatically at deploy time.
@@ -123,7 +132,11 @@ if kubectl get statefulset postgresql -n "$NAMESPACE" >/dev/null 2>&1; then
   echo "  -> Removing existing postgresql StatefulSet (PVC preserved)..."
   kubectl delete statefulset postgresql -n "$NAMESPACE" --cascade=orphan
 fi
-# Also uninstall any leftover Bitnami helm release for postgresql
+# Also delete the orphaned pod so the new StatefulSet creates a clean one.
+# --cascade=orphan leaves the pod running; it may reference stale Bitnami ConfigMaps
+# that no longer exist (e.g. postgresql-extended-configuration deleted by helm uninstall).
+kubectl delete pod postgresql-0 -n "$NAMESPACE" --ignore-not-found=true
+# Uninstall any leftover Bitnami helm release for postgresql
 helm uninstall postgresql -n "$NAMESPACE" 2>/dev/null || true
 
 cat <<EOF | kubectl apply -f -

@@ -116,9 +116,9 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.registry="quay.io" \
   --set-string clientImage.repository="minio/mc" \
   --set-string clientImage.tag="latest" \
-  --set-string consoleImage.registry="quay.io" \
-  --set-string consoleImage.repository="minio/console" \
-  --set-string consoleImage.tag="latest" \
+  --set-string console.image.registry="quay.io" \
+  --set-string console.image.repository="minio/console" \
+  --set-string console.image.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   -f "$MINIO_SECRET_VALUES"
 # NOTE: Buckets are not created automatically at deploy time.
@@ -330,7 +330,7 @@ spec:
     spec:
       containers:
         - name: pgbouncer
-          image: pgbouncer/pgbouncer:1.23.1
+          image: pgbouncer/pgbouncer:latest
           imagePullPolicy: IfNotPresent
           command: ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
           ports:
@@ -486,15 +486,22 @@ if ! helm upgrade --install airflow apache-airflow/airflow \
   echo "--- Migration job logs (primary failure point) ---"
   MIGRATION_POD="$(kubectl get pods -n "$NAMESPACE" -l 'job-name=airflow-run-airflow-migrations' -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -n "$MIGRATION_POD" ]]; then
+    echo "  [current]"
     kubectl logs "$MIGRATION_POD" -n "$NAMESPACE" --all-containers --tail=60 2>/dev/null || true
+    echo "  [previous crash]"
+    kubectl logs "$MIGRATION_POD" -n "$NAMESPACE" --all-containers --previous --tail=60 2>/dev/null || echo "  (no previous log)"
   else
     echo "  (migration pod not found)"
   fi
   echo ""
-  echo "--- Logs from all airflow pods (last 30 lines each) ---"
+  echo "--- airflow-secrets content check ---"
+  kubectl get secret airflow-secrets -n "$NAMESPACE" -o jsonpath='{.data}' 2>/dev/null \
+    | tr ',' '\n' | sed 's/[{}"]//g' | awk -F: '{print $1}' || echo "  (secret not found)"
+  echo ""
+  echo "--- Logs from all airflow pods (previous crash, last 40 lines each) ---"
   for pod in $(kubectl get pods -n "$NAMESPACE" -l release=airflow -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "  >> $pod"
-    kubectl logs "$pod" -n "$NAMESPACE" --all-containers --tail=30 2>/dev/null || true
+    echo "  >> $pod [previous]"
+    kubectl logs "$pod" -n "$NAMESPACE" --all-containers --previous --tail=40 2>/dev/null || true
     echo ""
   done
   exit 1

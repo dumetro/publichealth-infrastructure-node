@@ -213,9 +213,28 @@ spec:
             storage: ${POSTGRES_PERSISTENCE_SIZE}
 EOF
 
-kubectl rollout status statefulset/postgresql -n "$NAMESPACE" --timeout=10m
+if ! kubectl rollout status statefulset/postgresql -n "$NAMESPACE" --timeout=10m; then
+  echo ""
+  echo "ERROR: PostgreSQL StatefulSet did not become ready within 10m. Diagnostics:"
+  echo ""
+  echo "--- Pod status ---"
+  kubectl get pods -n "$NAMESPACE" -l app=postgresql -o wide || true
+  echo ""
+  echo "--- Pod events ---"
+  POSTGRES_POD_DIAG="$(kubectl get pod -n "$NAMESPACE" -l app=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "$POSTGRES_POD_DIAG" ]]; then
+    kubectl describe pod "$POSTGRES_POD_DIAG" -n "$NAMESPACE" || true
+    echo ""
+    echo "--- Container logs ---"
+    kubectl logs "$POSTGRES_POD_DIAG" -n "$NAMESPACE" --all-containers --tail=60 || true
+  else
+    echo "  (no pod found — StatefulSet may have failed to schedule)"
+    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -20 || true
+  fi
+  exit 1
+fi
 
-POSTGRES_POD="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=primary,app.kubernetes.io/instance=postgresql -o jsonpath='{.items[0].metadata.name}')"
+POSTGRES_POD="$(kubectl get pod -n "$NAMESPACE" -l app=postgresql -o jsonpath='{.items[0].metadata.name}')"
 if [[ -z "$POSTGRES_POD" ]]; then
   echo "ERROR: Unable to find PostgreSQL primary pod"
   exit 1

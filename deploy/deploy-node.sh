@@ -64,6 +64,12 @@ for required in POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD; do
   fi
 done
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is required to render URI-safe Airflow metadata credentials."
+  echo "Install it via deploy/bootstrap.sh before running deploy/deploy-node.sh"
+  exit 1
+fi
+
 TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
@@ -80,7 +86,11 @@ yq e -n \
   > "$GRAFANA_SECRET_VALUES"
 
 yq e -n \
-  '.auth.rootPassword = strenv("MINIO_ROOT_PASSWORD")' \
+  '.auth.rootPassword     = strenv("MINIO_ROOT_PASSWORD") |
+   .auth.usePasswordFiles = false |
+   .console.enabled       = false |
+   .command               = ["minio"] |
+   .args                  = ["server", "/bitnami/minio/data"]' \
   > "$MINIO_SECRET_VALUES"
 
 yq e -n \
@@ -105,22 +115,50 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 # 3. Storage
 # Bitnami minio images require a paid subscription since Aug 2025 — override with the
 # official quay.io/minio/minio image which is freely available.
+# This chart version still defaults to a separate console image that is no longer
+# published, so disable that deployment and run the upstream server with explicit
+# arguments instead of the Bitnami entrypoint contract.
 helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
   --set global.security.allowInsecureImages=true \
   --set-string image.registry="quay.io" \
   --set-string image.repository="minio/minio" \
-  --set-string image.tag="latest" \
+  --set-string image.tag="RELEASE.2025-09-07T16-13-09Z" \
   --set-string clientImage.registry="quay.io" \
   --set-string clientImage.repository="minio/mc" \
   --set-string clientImage.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
-  -f "$MINIO_SECRET_VALUES"
-# NOTE: No separate console image override needed — MinIO bundles the web console
-# inside the server binary since RELEASE.2022-11+. The bitnami chart's consoleImage
-# field is only used for older chart versions that shipped a sidecar.
+  -f "$MINIO_SECRET_VALUES" \
+  --wait --timeout 10m
+# NOTE: The upstream MinIO image bundles the web console, but this Bitnami chart
+# still tries to deploy an obsolete standalone browser image by default. We disable
+# that console deployment above to keep the release functional.
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
+
+if ! kubectl rollout status deployment/minio -n "$NAMESPACE" --timeout=10m; then
+  echo ""
+  echo "ERROR: MinIO deployment did not become ready within 10m. Diagnostics:"
+  echo ""
+  echo "--- Pod status ---"
+  kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=minio -o wide || true
+  echo ""
+  echo "--- Pod events ---"
+  MINIO_POD_DIAG="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=minio,app.kubernetes.io/instance=minio -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "$MINIO_POD_DIAG" ]]; then
+    kubectl describe pod "$MINIO_POD_DIAG" -n "$NAMESPACE" || true
+    echo ""
+    echo "--- Container logs ---"
+    kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --tail=80 || true
+    echo ""
+    echo "--- Previous container logs ---"
+    kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --previous --tail=80 || true
+  else
+    echo "  (no MinIO pod found)"
+    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -20 || true
+  fi
+  exit 1
+fi
 
 # 4. Database — deployed as a plain StatefulSet using our custom postgis+pgvector image.
 # The Bitnami postgresql chart expects Bitnami-specific entrypoints that are not present
@@ -258,13 +296,16 @@ fi
 # Write a temporary SQL file into the pod to avoid shell quoting complexity with passwords.
 PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.postgres-password}' | base64 -d)"
 PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
+PGPASSWORD_APP_SQL_ESCAPED="${PGPASSWORD_APP//\'/\'\'}"
 
 TMP_INIT_SQL="$(mktemp)"
 trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
-    CREATE USER "${POSTGRES_APP_USER}" WITH PASSWORD '${PGPASSWORD_APP}';
+    CREATE USER "${POSTGRES_APP_USER}" WITH PASSWORD '${PGPASSWORD_APP_SQL_ESCAPED}';
+  ELSE
+    ALTER USER "${POSTGRES_APP_USER}" WITH PASSWORD '${PGPASSWORD_APP_SQL_ESCAPED}';
   END IF;
 END \$\$;
 GRANT ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" TO "${POSTGRES_APP_USER}";
@@ -334,8 +375,9 @@ spec:
     spec:
       containers:
         - name: pgbouncer
-          image: pgbouncer/pgbouncer:latest
+          image: edoburu/pgbouncer:1.23.1
           imagePullPolicy: IfNotPresent
+          command: ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
           ports:
             - containerPort: 5432
               name: pgbouncer
@@ -451,6 +493,30 @@ spec:
                 claimName: postgres-backups
 EOF
 
+if ! kubectl rollout status deployment/pgbouncer -n "$NAMESPACE" --timeout=5m; then
+  echo ""
+  echo "ERROR: PgBouncer deployment did not become ready within 5m. Diagnostics:"
+  echo ""
+  echo "--- Pod status ---"
+  kubectl get pods -n "$NAMESPACE" -l app=pgbouncer -o wide || true
+  echo ""
+  echo "--- Pod events ---"
+  PGBOUNCER_POD_DIAG="$(kubectl get pod -n "$NAMESPACE" -l app=pgbouncer -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "$PGBOUNCER_POD_DIAG" ]]; then
+    kubectl describe pod "$PGBOUNCER_POD_DIAG" -n "$NAMESPACE" || true
+    echo ""
+    echo "--- Container logs ---"
+    kubectl logs "$PGBOUNCER_POD_DIAG" -n "$NAMESPACE" --tail=80 || true
+    echo ""
+    echo "--- Previous container logs ---"
+    kubectl logs "$PGBOUNCER_POD_DIAG" -n "$NAMESPACE" --previous --tail=80 || true
+  else
+    echo "  (no PgBouncer pod found)"
+    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -20 || true
+  fi
+  exit 1
+fi
+
 # 5. Metadata
 if [[ -d "./charts/unity-catalog" ]]; then
   helm upgrade --install unity-catalog ./charts/unity-catalog \
@@ -479,7 +545,9 @@ helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
 # defaults to airflow-postgresql.data-stack when postgresql.enabled=false.
 # Airflow connects directly to PostgreSQL (bypassing PgBouncer) to avoid SCRAM
 # auth handshake issues with Airflow's internal connection pooler.
-AIRFLOW_DB_DSN="postgresql+psycopg2://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgresql.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
+ENCODED_POSTGRES_USER="$(jq -nr --arg value "$POSTGRES_APP_USER" '$value|@uri')"
+ENCODED_POSTGRES_PASSWORD="$(jq -nr --arg value "$POSTGRES_APP_PASSWORD" '$value|@uri')"
+AIRFLOW_DB_DSN="postgresql+psycopg2://${ENCODED_POSTGRES_USER}:${ENCODED_POSTGRES_PASSWORD}@postgresql.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
 kubectl create secret generic airflow-metadata \
   --namespace "$NAMESPACE" \
   --from-literal="connection=${AIRFLOW_DB_DSN}" \

@@ -25,16 +25,21 @@ export POSTGRES_APP_PASSWORD='replace-with-postgres-app-password'
 export AIRFLOW_FERNET_KEY='replace-with-airflow-fernet-key'
 export AIRFLOW_WEBSERVER_SECRET_KEY='replace-with-airflow-webserver-secret-key'
 export AIRFLOW_ADMIN_PASSWORD='replace-with-airflow-admin-password'
+export AIRFLOW_API_SECRET_KEY='replace-with-airflow-api-secret-key'
 ```
 
-If you use Vault or an external secret controller, you can provision the Kubernetes secret
-`airflow-secrets` out-of-band instead of exporting the Airflow variables above. The secret
-must contain these keys:
+If you use Vault or an external secret controller, you can provision the Kubernetes secrets
+`airflow-secrets` and `airflow-api-secret-key` out-of-band instead of exporting the Airflow
+variables above. `airflow-secrets` must contain these keys:
 
 - `sql_alchemy_conn`
 - `fernet_key`
 - `webserver_secret_key`
 - `admin_password`
+
+`airflow-api-secret-key` must contain:
+
+- `api-secret-key`
 
 PostgreSQL stack (new)
 

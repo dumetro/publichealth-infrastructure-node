@@ -24,7 +24,7 @@ fi
 # --- Pre-flight: verify required secrets are present before spending time on earlier steps ---
 echo "Checking required secrets..."
 MISSING_SECRETS=()
-for var in MINIO_ROOT_PASSWORD UNITY_CATALOG_ADMIN_TOKEN POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD AIRFLOW_FERNET_KEY AIRFLOW_WEBSERVER_SECRET_KEY AIRFLOW_ADMIN_PASSWORD; do
+for var in MINIO_ROOT_PASSWORD UNITY_CATALOG_ADMIN_TOKEN POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD AIRFLOW_FERNET_KEY AIRFLOW_WEBSERVER_SECRET_KEY AIRFLOW_ADMIN_PASSWORD AIRFLOW_API_SECRET_KEY; do
   if [[ -z "${!var:-}" ]]; then
     MISSING_SECRETS+=("$var")
   fi
@@ -43,6 +43,7 @@ if [[ ${#MISSING_SECRETS[@]} -gt 0 ]]; then
   echo "  export AIRFLOW_FERNET_KEY='...'"
   echo "  export AIRFLOW_WEBSERVER_SECRET_KEY='...'"
   echo "  export AIRFLOW_ADMIN_PASSWORD='...'"
+  echo "  export AIRFLOW_API_SECRET_KEY='...'"
   echo ""
   echo "Then re-run with: sudo -E bash deploy/bootstrap.sh"
   exit 1

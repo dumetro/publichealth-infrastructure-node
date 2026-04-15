@@ -12,6 +12,7 @@ grafana_admin_password   = "replace-with-grafana-admin-password"
 airflow_fernet_key       = "replace-with-airflow-fernet-key"
 airflow_webserver_secret_key = "replace-with-airflow-webserver-secret-key"
 airflow_admin_password   = "replace-with-airflow-admin-password"
+airflow_api_secret_key   = "replace-with-airflow-api-secret-key"
 
 postgres_superuser_password = "replace-with-postgres-superuser-password"
 postgres_app_password       = "replace-with-postgres-app-password"

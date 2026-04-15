@@ -90,6 +90,19 @@ resource "kubernetes_secret" "airflow_secrets" {
   type = "Opaque"
 }
 
+resource "kubernetes_secret" "airflow_api_secret_key" {
+  metadata {
+    name      = "airflow-api-secret-key"
+    namespace = kubernetes_namespace.data_stack.metadata[0].name
+  }
+
+  data = {
+    api-secret-key = var.airflow_api_secret_key
+  }
+
+  type = "Opaque"
+}
+
 resource "helm_release" "ingress_nginx" {
   name       = "ingress-nginx"
   repository = "https://kubernetes.github.io/ingress-nginx"
@@ -536,6 +549,7 @@ resource "helm_release" "airflow" {
   depends_on = [
     kubernetes_namespace.data_stack,
     kubernetes_secret.airflow_secrets,
+    kubernetes_secret.airflow_api_secret_key,
     kubernetes_secret.postgres_creds,
     kubernetes_service.pgbouncer,
   ]

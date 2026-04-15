@@ -298,6 +298,12 @@ PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jso
 PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
 PGPASSWORD_APP_SQL_ESCAPED="${PGPASSWORD_APP//\'/\'\'}"
 
+if [[ "$POSTGRES_APP_PASSWORD" != "$PGPASSWORD_APP" ]]; then
+  echo "WARN: POSTGRES_APP_PASSWORD differs from the live postgres-creds secret."
+  echo "      Using the cluster secret value for PgBouncer and Airflow to keep auth consistent."
+  echo "      Re-run deploy/setup-secrets.sh first if you intended to rotate database credentials."
+fi
+
 TMP_INIT_SQL="$(mktemp)"
 trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
@@ -332,7 +338,7 @@ metadata:
 type: Opaque
 stringData:
   userlist.txt: |
-    "${POSTGRES_APP_USER}" "${POSTGRES_APP_PASSWORD}"
+    "${POSTGRES_APP_USER}" "${PGPASSWORD_APP}"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -546,7 +552,7 @@ helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
 # Airflow connects directly to PostgreSQL (bypassing PgBouncer) to avoid SCRAM
 # auth handshake issues with Airflow's internal connection pooler.
 ENCODED_POSTGRES_USER="$(jq -nr --arg value "$POSTGRES_APP_USER" '$value|@uri')"
-ENCODED_POSTGRES_PASSWORD="$(jq -nr --arg value "$POSTGRES_APP_PASSWORD" '$value|@uri')"
+ENCODED_POSTGRES_PASSWORD="$(jq -nr --arg value "$PGPASSWORD_APP" '$value|@uri')"
 AIRFLOW_DB_DSN="postgresql+psycopg2://${ENCODED_POSTGRES_USER}:${ENCODED_POSTGRES_PASSWORD}@postgresql.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
 kubectl create secret generic airflow-metadata \
   --namespace "$NAMESPACE" \
@@ -598,6 +604,16 @@ if [[ -d "./charts/mlflow" ]]; then
 else
   echo "WARN: ./charts/mlflow not found; skipping MLflow Helm release."
 fi
+
+if command -v k3s >/dev/null 2>&1; then
+  if ! k3s ctr images list 2>/dev/null | grep -q 'jupyter-health-env:latest'; then
+    echo "ERROR: Required local image 'jupyter-health-env:latest' is not present in k3s containerd."
+    echo "Run sudo -E bash deploy/bootstrap.sh on this server, or import the image manually,"
+    echo "before re-running deploy/deploy-node.sh for the JupyterHub step."
+    exit 1
+  fi
+fi
+
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \
   -f config/values/jupyterhub-values.yaml \

@@ -58,6 +58,12 @@ variable "airflow_admin_password" {
   sensitive   = true
 }
 
+variable "airflow_api_secret_key" {
+  description = "Static Airflow API secret key used for request signing."
+  type        = string
+  sensitive   = true
+}
+
 variable "minio_buckets" {
   description = "Buckets to create in MinIO."
   type        = list(string)

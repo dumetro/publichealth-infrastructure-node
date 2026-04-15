@@ -25,9 +25,11 @@ if [[ -z "$POSTGRES_APP_PASSWORD" ]]; then
 fi
 
 AIRFLOW_SECRET_NAME="airflow-secrets"
+AIRFLOW_API_SECRET_NAME="airflow-api-secret-key"
 AIRFLOW_FERNET_KEY="${AIRFLOW_FERNET_KEY:-}"
 AIRFLOW_WEBSERVER_SECRET_KEY="${AIRFLOW_WEBSERVER_SECRET_KEY:-}"
 AIRFLOW_ADMIN_PASSWORD="${AIRFLOW_ADMIN_PASSWORD:-}"
+AIRFLOW_API_SECRET_KEY="${AIRFLOW_API_SECRET_KEY:-}"
 AIRFLOW_SQL_ALCHEMY_CONN="${AIRFLOW_SQL_ALCHEMY_CONN:-}"
 
 for required in MINIO_PASS UC_TOKEN POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD; do
@@ -67,7 +69,7 @@ if [[ -z "$AIRFLOW_SQL_ALCHEMY_CONN" ]]; then
   AIRFLOW_SQL_ALCHEMY_CONN="postgresql+psycopg2://${ENCODED_POSTGRES_USER}:${ENCODED_POSTGRES_PASSWORD}@pgbouncer.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
 fi
 
-if [[ -n "$AIRFLOW_FERNET_KEY" && -n "$AIRFLOW_WEBSERVER_SECRET_KEY" && -n "$AIRFLOW_ADMIN_PASSWORD" ]]; then
+if [[ -n "$AIRFLOW_FERNET_KEY" && -n "$AIRFLOW_WEBSERVER_SECRET_KEY" && -n "$AIRFLOW_ADMIN_PASSWORD" && -n "$AIRFLOW_API_SECRET_KEY" ]]; then
   kubectl create secret generic "$AIRFLOW_SECRET_NAME" \
     --namespace "$NAMESPACE" \
     --from-literal=sql_alchemy_conn="$AIRFLOW_SQL_ALCHEMY_CONN" \
@@ -75,12 +77,18 @@ if [[ -n "$AIRFLOW_FERNET_KEY" && -n "$AIRFLOW_WEBSERVER_SECRET_KEY" && -n "$AIR
     --from-literal=webserver_secret_key="$AIRFLOW_WEBSERVER_SECRET_KEY" \
     --from-literal=admin_password="$AIRFLOW_ADMIN_PASSWORD" \
     --dry-run=client -o yaml | kubectl apply -f -
-elif kubectl get secret "$AIRFLOW_SECRET_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1; then
-  echo "  -> Reusing existing $AIRFLOW_SECRET_NAME secret (external secret manager or prior setup)"
+
+  kubectl create secret generic "$AIRFLOW_API_SECRET_NAME" \
+    --namespace "$NAMESPACE" \
+    --from-literal=api-secret-key="$AIRFLOW_API_SECRET_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+elif kubectl get secret "$AIRFLOW_SECRET_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 \
+  && kubectl get secret "$AIRFLOW_API_SECRET_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1; then
+  echo "  -> Reusing existing $AIRFLOW_SECRET_NAME and $AIRFLOW_API_SECRET_NAME secrets (external secret manager or prior setup)"
 else
   echo "ERROR: Airflow secret '$AIRFLOW_SECRET_NAME' is missing."
-  echo "Set AIRFLOW_FERNET_KEY, AIRFLOW_WEBSERVER_SECRET_KEY, and AIRFLOW_ADMIN_PASSWORD before running this script"
-  echo "or provision the '$AIRFLOW_SECRET_NAME' secret externally (for example via Vault or External Secrets)."
+  echo "Set AIRFLOW_FERNET_KEY, AIRFLOW_WEBSERVER_SECRET_KEY, AIRFLOW_ADMIN_PASSWORD, and AIRFLOW_API_SECRET_KEY before running this script"
+  echo "or provision the '$AIRFLOW_SECRET_NAME' and '$AIRFLOW_API_SECRET_NAME' secrets externally (for example via Vault or External Secrets)."
   exit 1
 fi
 

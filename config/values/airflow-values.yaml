@@ -1,18 +1,14 @@
 # Airflow orchestration configuration — Public Health AI Node
 # Secrets are sourced from the pre-created Kubernetes secret `airflow-secrets`.
 
-# Metadata DB connection — points to PgBouncer which proxies to the postgres StatefulSet.
-# The chart builds AIRFLOW__DATABASE__SQL_ALCHEMY_CONN from these fields; this is the
-# authoritative source and overrides the chart's default (airflow-postgresql.data-stack).
-# The password is injected at install time via a temp values file (deploy-node.sh).
+# Pre-created secret with key 'connection' holding the full SQLAlchemy DSN.
+# Using metadataSecretName bypasses the chart's own DSN construction entirely,
+# which defaults to airflow-postgresql.data-stack when postgresql.enabled=false.
+# The secret is created by deploy-node.sh before this chart is installed.
+# Airflow connects directly to PostgreSQL (not via PgBouncer) to avoid SCRAM/pool-mode
+# compatibility issues with Airflow's internal connection pooler.
 data:
-  metadataConnection:
-    user: health_app
-    host: pgbouncer.data-stack.svc.cluster.local
-    port: 5432
-    db: health_node
-    sslmode: disable
-    protocol: postgresql
+  metadataSecretName: airflow-metadata
 
 executor: KubernetesExecutor
 

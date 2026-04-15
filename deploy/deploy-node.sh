@@ -64,14 +64,11 @@ for required in POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD; do
   fi
 done
 
-POSTGRES_APP_MD5="md5$(printf "%s%s" "$POSTGRES_APP_PASSWORD" "$POSTGRES_APP_USER" | md5sum | awk '{print $1}')"
-
 TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
 POSTGRES_SECRET_VALUES="$(mktemp)"
-AIRFLOW_SECRET_VALUES="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_SECRET_VALUES"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
 
 UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
 
@@ -90,13 +87,6 @@ yq e -n \
   '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
    .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
   > "$POSTGRES_SECRET_VALUES"
-
-# Airflow metadata DB password — injected via data.metadataConnection.pass so the chart
-# generates the correct AIRFLOW__DATABASE__SQL_ALCHEMY_CONN (pointing at pgbouncer) rather
-# than defaulting to the postgresql subchart service (airflow-postgresql.data-stack).
-yq e -n \
-  '.data.metadataConnection.pass = strenv("POSTGRES_APP_PASSWORD")' \
-  > "$AIRFLOW_SECRET_VALUES"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
@@ -270,7 +260,7 @@ PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jso
 PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
 
 TMP_INIT_SQL="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
@@ -278,6 +268,8 @@ DO \$\$ BEGIN
   END IF;
 END \$\$;
 GRANT ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" TO "${POSTGRES_APP_USER}";
+-- PostgreSQL 15+ removed default CREATE on public schema; Airflow migrations need it.
+GRANT ALL ON SCHEMA public TO "${POSTGRES_APP_USER}";
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS vector;
 ENDSQL
@@ -285,6 +277,10 @@ ENDSQL
 kubectl cp "$TMP_INIT_SQL" "$NAMESPACE/$POSTGRES_POD:/tmp/init.sql"
 kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
   sh -ec "PGPASSWORD='$PGPASSWORD_SUPERUSER' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -f /tmp/init.sql && rm /tmp/init.sql"
+
+# Delete the pgbouncer Deployment before apply to clear any stale pods that may
+# be stuck in ImagePullBackOff from a previous image tag and blocking rolling updates.
+kubectl delete deployment pgbouncer -n "$NAMESPACE" --ignore-not-found=true
 
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
@@ -295,7 +291,7 @@ metadata:
 type: Opaque
 stringData:
   userlist.txt: |
-    "${POSTGRES_APP_USER}" "${POSTGRES_APP_MD5}"
+    "${POSTGRES_APP_USER}" "${POSTGRES_APP_PASSWORD}"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -310,7 +306,7 @@ data:
     [pgbouncer]
     listen_addr = 0.0.0.0
     listen_port = 5432
-    auth_type = md5
+    auth_type = scram-sha-256
     auth_file = /etc/pgbouncer/userlist.txt
     pool_mode = ${PGBOUNCER_POOL_MODE}
     max_client_conn = ${PGBOUNCER_MAX_CLIENT_CONN}
@@ -340,7 +336,6 @@ spec:
         - name: pgbouncer
           image: pgbouncer/pgbouncer:latest
           imagePullPolicy: IfNotPresent
-          command: ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
           ports:
             - containerPort: 5432
               name: pgbouncer
@@ -473,15 +468,24 @@ helm upgrade --install trino trino/trino \
   -f "$TRINO_VALUES_RENDERED"
 
 # 7. Orchestration
+# Create the airflow-metadata secret with the full SQLAlchemy DSN before helm install.
+# airflow-values.yaml sets data.metadataSecretName=airflow-metadata which makes the chart
+# reference this secret directly instead of constructing its own URL (which defaults to
+# airflow-postgresql.data-stack). Airflow connects directly to PostgreSQL, not via
+# PgBouncer, to avoid SCRAM auth compatibility issues with Airflow's internal pooler.
+AIRFLOW_DB_DSN="postgresql+psycopg2://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgresql.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
+kubectl create secret generic airflow-metadata \
+  --namespace "$NAMESPACE" \
+  --from-literal="connection=${AIRFLOW_DB_DSN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 # Uninstall any existing Airflow release before installing — previous installs may have
-# baked in the chart's default DB connection (airflow-postgresql.data-stack) if the
-# secret env vars failed to apply. A fresh install guarantees our extraEnv takes effect.
+# the wrong DB connection baked into the airflow-airflow-metadata secret.
 helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
 
 if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
   -f config/values/airflow-values.yaml \
-  -f "$AIRFLOW_SECRET_VALUES" \
   --timeout 10m; then
   echo ""
   echo "ERROR: Airflow Helm install timed out. Diagnostics:"

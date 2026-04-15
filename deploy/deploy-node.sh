@@ -606,7 +606,8 @@ else
 fi
 
 if command -v k3s >/dev/null 2>&1; then
-  if ! k3s ctr images list 2>/dev/null | grep -q 'jupyter-health-env:latest'; then
+  K3S_IMAGE_LIST="$(k3s ctr images list 2>/dev/null || true)"
+  if ! grep -q 'jupyter-health-env:latest' <<< "$K3S_IMAGE_LIST"; then
     echo "ERROR: Required local image 'jupyter-health-env:latest' is not present in k3s containerd."
     echo "Run sudo -E bash deploy/bootstrap.sh on this server, or import the image manually,"
     echo "before re-running deploy/deploy-node.sh for the JupyterHub step."

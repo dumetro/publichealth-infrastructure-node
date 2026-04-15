@@ -268,7 +268,7 @@ resource "kubernetes_deployment" "pgbouncer" {
       spec {
         container {
           name              = "pgbouncer"
-          image             = "edoburu/pgbouncer:1.23.1"
+          image             = "edoburu/pgbouncer:v1.23.1-p3"
           image_pull_policy = "IfNotPresent"
           command           = ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
 

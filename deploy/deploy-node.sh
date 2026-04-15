@@ -375,7 +375,7 @@ spec:
     spec:
       containers:
         - name: pgbouncer
-          image: edoburu/pgbouncer:1.23.1
+          image: edoburu/pgbouncer:v1.23.1-p3
           imagePullPolicy: IfNotPresent
           command: ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
           ports:

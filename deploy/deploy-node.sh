@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
 
 CONFIG_FILE="config/env-config.yaml"
 NAMESPACE=$(yq e '.global.namespace' "$CONFIG_FILE")
@@ -70,6 +70,100 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+CURRENT_STEP="bootstrap"
+CURRENT_NAMESPACE="$NAMESPACE"
+CURRENT_RELEASE=""
+CURRENT_SELECTOR=""
+
+set_checkpoint() {
+  CURRENT_STEP="$1"
+  CURRENT_NAMESPACE="${2:-$NAMESPACE}"
+  CURRENT_RELEASE="${3:-}"
+  CURRENT_SELECTOR="${4:-}"
+  echo "[STEP] $CURRENT_STEP"
+}
+
+print_matching_pods() {
+  local namespace="$1"
+  local selector="$2"
+
+  if [[ -n "$selector" ]]; then
+    kubectl get pods -n "$namespace" -l "$selector" -o wide || true
+  else
+    kubectl get pods -n "$namespace" -o wide || true
+  fi
+}
+
+print_matching_logs() {
+  local namespace="$1"
+  local selector="$2"
+  local pod_names=""
+
+  if [[ -n "$selector" ]]; then
+    pod_names="$(kubectl get pods -n "$namespace" -l "$selector" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$pod_names" ]]; then
+    echo "  (no matching pods found for log collection)"
+    return
+  fi
+
+  while IFS= read -r pod_name; do
+    [[ -z "$pod_name" ]] && continue
+    echo ""
+    echo "--- Describe pod/$pod_name ---"
+    kubectl describe pod "$pod_name" -n "$namespace" || true
+    echo ""
+    echo "--- Logs pod/$pod_name (all containers) ---"
+    kubectl logs "$pod_name" -n "$namespace" --all-containers --tail=120 || true
+    echo ""
+    echo "--- Previous logs pod/$pod_name (all containers) ---"
+    kubectl logs "$pod_name" -n "$namespace" --all-containers --previous --tail=120 || true
+  done < <(printf '%s\n' "$pod_names" | head -n 3)
+}
+
+diagnose_current_step() {
+  local failed_command="$1"
+
+  echo ""
+  echo "ERROR: Step '$CURRENT_STEP' failed."
+  echo "Failed command: $failed_command"
+  echo ""
+
+  if [[ -n "$CURRENT_RELEASE" ]]; then
+    echo "--- Helm status (${CURRENT_RELEASE}) ---"
+    helm status "$CURRENT_RELEASE" -n "$CURRENT_NAMESPACE" || true
+    echo ""
+  fi
+
+  echo "--- Workload summary (${CURRENT_NAMESPACE}) ---"
+  kubectl get deployments,statefulsets,daemonsets,jobs,cronjobs -n "$CURRENT_NAMESPACE" 2>/dev/null || true
+  echo ""
+
+  echo "--- Pod status (${CURRENT_NAMESPACE}) ---"
+  print_matching_pods "$CURRENT_NAMESPACE" "$CURRENT_SELECTOR"
+  echo ""
+
+  echo "--- Recent events (${CURRENT_NAMESPACE}) ---"
+  kubectl get events -n "$CURRENT_NAMESPACE" --sort-by='.lastTimestamp' | tail -40 || true
+  echo ""
+
+  echo "--- Pod diagnostics (${CURRENT_NAMESPACE}) ---"
+  print_matching_logs "$CURRENT_NAMESPACE" "$CURRENT_SELECTOR"
+}
+
+handle_unexpected_error() {
+  local exit_code=$?
+  local failed_command="${BASH_COMMAND:-unknown}"
+
+  trap - ERR
+  set +e
+  diagnose_current_step "$failed_command"
+  exit "$exit_code"
+}
+
+trap 'handle_unexpected_error' ERR
+
 TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
@@ -102,15 +196,19 @@ echo "🚀 Initiating Public Health AI Node Deployment..."
 
 # 1. Monitoring Stack — deployed first so Prometheus Operator CRDs (ServiceMonitor etc.)
 # are available before ingress-nginx tries to create a ServiceMonitor resource.
+set_checkpoint "Monitoring stack" "monitoring" "monitoring" "app.kubernetes.io/instance=monitoring"
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   -f config/values/monitoring-values.yaml \
   -f "$GRAFANA_SECRET_VALUES"
+echo "[OK] Monitoring stack deployed."
 
 # 2. Gateway — depends on ServiceMonitor CRD from step 1.
+set_checkpoint "ingress-nginx" "ingress-basic" "ingress-nginx" "app.kubernetes.io/instance=ingress-nginx"
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-basic --create-namespace \
   -f config/values/ingress-values.yaml
+echo "[OK] ingress-nginx deployed."
 
 # 3. Storage
 # Bitnami minio images require a paid subscription since Aug 2025 — override with the
@@ -118,6 +216,7 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 # This chart version still defaults to a separate console image that is no longer
 # published, so disable that deployment and run the upstream server with explicit
 # arguments instead of the Bitnami entrypoint contract.
+set_checkpoint "MinIO" "$NAMESPACE" "minio" "app.kubernetes.io/instance=minio"
 helm upgrade --install minio bitnami/minio \
   --namespace "$NAMESPACE" --create-namespace \
   --set global.security.allowInsecureImages=true \
@@ -159,6 +258,7 @@ if ! kubectl rollout status deployment/minio -n "$NAMESPACE" --timeout=10m; then
   fi
   exit 1
 fi
+echo "[OK] MinIO deployed."
 
 # 4. Database — deployed as a plain StatefulSet using our custom postgis+pgvector image.
 # The Bitnami postgresql chart expects Bitnami-specific entrypoints that are not present
@@ -167,6 +267,7 @@ fi
 # Delete any existing postgresql StatefulSet before applying — Kubernetes forbids in-place
 # updates to volumeClaimTemplates and selector fields (e.g. leftover from a failed Bitnami
 # install). The PVC is preserved so data survives across re-deploys.
+set_checkpoint "PostgreSQL StatefulSet" "$NAMESPACE" "" "app=postgresql"
 if kubectl get statefulset postgresql -n "$NAMESPACE" >/dev/null 2>&1; then
   echo "  -> Removing existing postgresql StatefulSet (PVC preserved)..."
   kubectl delete statefulset postgresql -n "$NAMESPACE" --cascade=orphan
@@ -294,6 +395,7 @@ fi
 
 # Create app user, grant privileges, and enable extensions.
 # Write a temporary SQL file into the pod to avoid shell quoting complexity with passwords.
+set_checkpoint "PostgreSQL initialization" "$NAMESPACE" "" "app=postgresql"
 PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.postgres-password}' | base64 -d)"
 PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
 PGPASSWORD_APP_SQL_ESCAPED="${PGPASSWORD_APP//\'/\'\'}"
@@ -324,9 +426,11 @@ ENDSQL
 kubectl cp "$TMP_INIT_SQL" "$NAMESPACE/$POSTGRES_POD:/tmp/init.sql"
 kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
   sh -ec "PGPASSWORD='$PGPASSWORD_SUPERUSER' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -f /tmp/init.sql && rm /tmp/init.sql"
+echo "[OK] PostgreSQL deployed and initialized."
 
 # Delete the pgbouncer Deployment before apply to clear any stale pods that may
 # be stuck in ImagePullBackOff from a previous image tag and blocking rolling updates.
+set_checkpoint "PgBouncer" "$NAMESPACE" "" "app=pgbouncer"
 kubectl delete deployment pgbouncer -n "$NAMESPACE" --ignore-not-found=true
 
 cat <<EOF | kubectl apply -f -
@@ -522,27 +626,35 @@ if ! kubectl rollout status deployment/pgbouncer -n "$NAMESPACE" --timeout=5m; t
   fi
   exit 1
 fi
+echo "[OK] PgBouncer deployed."
 
 # 5. Metadata
 if [[ -d "./charts/unity-catalog" ]]; then
+  set_checkpoint "Unity Catalog" "$NAMESPACE" "unity-catalog" "app.kubernetes.io/instance=unity-catalog"
   helm upgrade --install unity-catalog ./charts/unity-catalog \
     --namespace "$NAMESPACE"
+  echo "[OK] Unity Catalog deployed."
 else
   echo "WARN: ./charts/unity-catalog not found; skipping Unity Catalog Helm release."
 fi
 
 # 6. Compute
+set_checkpoint "Spark Operator" "$NAMESPACE" "spark-operator" "app.kubernetes.io/instance=spark-operator"
 helm upgrade --install spark-operator spark-operator/spark-operator \
   --namespace "$NAMESPACE" \
   -f config/values/spark-values.yaml
+echo "[OK] Spark Operator deployed."
+set_checkpoint "Trino" "$NAMESPACE" "trino" "app.kubernetes.io/instance=trino"
 helm upgrade --install trino trino/trino \
   --namespace "$NAMESPACE" \
   -f "$TRINO_VALUES_RENDERED"
+echo "[OK] Trino deployed."
 
 # 7. Orchestration
 # Uninstall any previous Airflow release FIRST — a prior install may have adopted the
 # airflow-metadata secret into Helm's release manifest; if so, helm uninstall would
 # delete it. Creating the secret AFTER uninstall guarantees it is fresh and unowned.
+set_checkpoint "Airflow" "$NAMESPACE" "airflow" "release=airflow"
 helm uninstall airflow -n "$NAMESPACE" 2>/dev/null || true
 
 # Create the airflow-metadata secret with the full SQLAlchemy DSN.
@@ -565,6 +677,7 @@ if ! helm upgrade --install airflow apache-airflow/airflow \
   -f config/values/airflow-values.yaml \
   --timeout 10m; then
   AIRFLOW_INSTALL_FAILED=true
+  diagnose_current_step "helm upgrade --install airflow"
   echo ""
   echo "[WARN] Airflow install timed out — skipping. Diagnostics:"
   echo ""
@@ -595,16 +708,21 @@ if ! helm upgrade --install airflow apache-airflow/airflow \
   echo "         - Scheduled ETL jobs managed via Airflow"
   echo "         - Pipeline-triggered MLflow runs (if DAGs feed MLflow)"
   echo "         - KServe batch inference jobs triggered by Airflow DAGs"
+else
+  echo "[OK] Airflow deployed."
 fi
 
 # 8. ML & Workspace
 if [[ -d "./charts/mlflow" ]]; then
+  set_checkpoint "MLflow" "$NAMESPACE" "mlflow" "app.kubernetes.io/instance=mlflow"
   helm upgrade --install mlflow ./charts/mlflow \
     --namespace "$NAMESPACE"
+  echo "[OK] MLflow deployed."
 else
   echo "WARN: ./charts/mlflow not found; skipping MLflow Helm release."
 fi
 
+set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 if command -v k3s >/dev/null 2>&1; then
   K3S_IMAGE_LIST="$(k3s ctr images list 2>/dev/null || true)"
   if ! grep -q 'jupyter-health-env:latest' <<< "$K3S_IMAGE_LIST"; then
@@ -615,18 +733,22 @@ if command -v k3s >/dev/null 2>&1; then
   fi
 fi
 
+set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \
   -f config/values/jupyterhub-values.yaml \
   --set-string ingress.hosts[0]="${JUPYTER_HOST}"
+echo "[OK] JupyterHub deployed."
 
 # 9. Serving
 # Download and apply KServe manifest (pinned version v0.11.0)
+set_checkpoint "KServe manifest apply" "$NAMESPACE" "" ""
 KSERVE_MANIFEST="deploy/kserve-v0.11.0.yaml"
 if [ ! -f "$KSERVE_MANIFEST" ]; then
   curl -fsSL https://github.com/kserve/kserve/releases/download/v0.11.0/kserve.yaml -o "$KSERVE_MANIFEST"
 fi
 kubectl apply -f "$KSERVE_MANIFEST"
+echo "[OK] KServe manifest applied."
 
 if [[ "$AIRFLOW_INSTALL_FAILED" == "true" ]]; then
   echo ""

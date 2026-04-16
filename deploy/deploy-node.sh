@@ -7,8 +7,9 @@ DOMAIN=$(yq e '.global.domain' "$CONFIG_FILE")
 JUPYTER_HOST=$(yq e '.jupyterhub.hostname' "$CONFIG_FILE")
 AIRFLOW_HOST=$(yq e '.airflow.hostname' "$CONFIG_FILE")
 MINIO_HOST=$(yq e '.minio.hostname' "$CONFIG_FILE")
+GRAFANA_HOST=$(yq e '.monitoring.grafana.domain' "$CONFIG_FILE")
 STORAGE_CLASS=$(yq e '.global.storageClass' "$CONFIG_FILE")
-export JUPYTER_HOST AIRFLOW_HOST MINIO_HOST
+export JUPYTER_HOST AIRFLOW_HOST MINIO_HOST GRAFANA_HOST
 
 POSTGRES_IMAGE_REPOSITORY=$(yq e '.postgres.image.repository' "$CONFIG_FILE")
 POSTGRES_IMAGE_TAG=$(yq e '.postgres.image.tag' "$CONFIG_FILE")
@@ -181,11 +182,8 @@ trap 'handle_unexpected_error' ERR
 TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
-MINIO_INGRESS_VALUES="$(mktemp)"
 POSTGRES_SECRET_VALUES="$(mktemp)"
-AIRFLOW_INGRESS_VALUES="$(mktemp)"
-JUPYTER_INGRESS_VALUES="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$MINIO_INGRESS_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_INGRESS_VALUES" "$JUPYTER_INGRESS_VALUES"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
 
 UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
 
@@ -205,34 +203,9 @@ yq e -n \
   > "$MINIO_SECRET_VALUES"
 
 yq e -n \
-  '.apiIngress.enabled          = true |
-   .apiIngress.ingressClassName = "nginx" |
-   .apiIngress.hostname         = strenv("MINIO_HOST")' \
-  > "$MINIO_INGRESS_VALUES"
-
-yq e -n \
   '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
    .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
   > "$POSTGRES_SECRET_VALUES"
-
-yq e -n \
-  '.ingress.web.enabled                = false |
-   .ingress.apiServer.enabled          = true |
-   .ingress.apiServer.ingressClassName = "nginx" |
-   .ingress.apiServer.path             = "/" |
-   .ingress.apiServer.pathType         = "Prefix" |
-   .ingress.apiServer.host             = strenv("AIRFLOW_HOST") |
-   .ingress.apiServer.hosts            = [{"name": strenv("AIRFLOW_HOST")}]' \
-  > "$AIRFLOW_INGRESS_VALUES"
-# Note: both `host` (simple string) and `hosts[0].name` (object array) are set because
-# different minor versions of the apache-airflow Helm chart use one or the other.
-# The chart will use whichever its template reads; the other key is silently ignored.
-
-yq e -n \
-  '.ingress.enabled          = true |
-   .ingress.ingressClassName = "nginx" |
-   .ingress.hosts            = [strenv("JUPYTER_HOST")]' \
-  > "$JUPYTER_INGRESS_VALUES"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
@@ -269,8 +242,8 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.repository="minio/mc" \
   --set-string clientImage.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
+  --set apiIngress.enabled=false \
   -f "$MINIO_SECRET_VALUES" \
-  -f "$MINIO_INGRESS_VALUES" \
   --wait --timeout 10m
 # NOTE: The upstream MinIO image bundles the web console, but this Bitnami chart
 # still tries to deploy an obsolete standalone browser image by default. We disable
@@ -466,7 +439,7 @@ if [[ "$POSTGRES_APP_PASSWORD" != "$PGPASSWORD_APP" ]]; then
 fi
 
 TMP_INIT_SQL="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$MINIO_INGRESS_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_INGRESS_VALUES" "$JUPYTER_INGRESS_VALUES" "$TMP_INIT_SQL"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
@@ -734,7 +707,8 @@ AIRFLOW_INSTALL_FAILED=false
 if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
   -f config/values/airflow-values.yaml \
-  -f "$AIRFLOW_INGRESS_VALUES" \
+  --set ingress.web.enabled=false \
+  --set ingress.apiServer.enabled=false \
   --timeout 10m; then
   AIRFLOW_INSTALL_FAILED=true
   diagnose_current_step "helm upgrade --install airflow"
@@ -782,17 +756,6 @@ else
   echo "WARN: ./charts/mlflow not found; skipping MLflow Helm release."
 fi
 
-# Delete any stale Airflow ingress that has an empty/catch-all host (_).
-# When the Airflow install runs with a wrong ingress format it creates an ingress with
-# host "_", which the nginx admission webhook then treats as a duplicate catch-all and
-# blocks any subsequent JupyterHub upgrade that also routes path "/".
-AIRFLOW_INGRESS_HOST="$(kubectl get ingress airflow-ingress -n "$NAMESPACE" \
-  -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)"
-if [[ -z "$AIRFLOW_INGRESS_HOST" || "$AIRFLOW_INGRESS_HOST" == "_" ]]; then
-  echo "  -> Removing stale airflow-ingress (host is '${AIRFLOW_INGRESS_HOST:-empty}' — catch-all conflicts with JupyterHub)."
-  kubectl delete ingress airflow-ingress -n "$NAMESPACE" --ignore-not-found=true
-fi
-
 set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 if command -v k3s >/dev/null 2>&1; then
   K3S_IMAGE_LIST="$(k3s ctr images list 2>/dev/null || true)"
@@ -813,7 +776,7 @@ set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \
   -f config/values/jupyterhub-values.yaml \
-  -f "$JUPYTER_INGRESS_VALUES"
+  --set ingress.enabled=false
 echo "[OK] JupyterHub deployed."
 
 # 9. Serving
@@ -846,6 +809,105 @@ fi
 kubectl apply -f "$KSERVE_MANIFEST"
 echo "[OK] KServe manifest applied."
 
+# 10. Ingress — all service ingresses are created here, after every service is deployed.
+# Managing ingress via kubectl apply rather than chart values avoids two classes of bugs:
+#   (a) chart-version ambiguity (e.g. Airflow chart reads host vs hosts[0].name depending
+#       on minor version, producing host "_" when the wrong key is used)
+#   (b) nginx admission webhook rejecting a subsequent helm upgrade because an earlier
+#       chart left a catch-all ingress that conflicts with another service's path.
+set_checkpoint "Service ingresses" "$NAMESPACE" "" ""
+
+# Remove any chart-managed ingresses for the three services we are taking over.
+# Label selectors ensure we catch whatever name the chart chose for the resource.
+kubectl delete ingress \
+  -n "$NAMESPACE" \
+  -l "app.kubernetes.io/instance=airflow" \
+  --ignore-not-found=true 2>/dev/null || true
+kubectl delete ingress \
+  -n "$NAMESPACE" \
+  -l "app.kubernetes.io/instance=minio" \
+  --ignore-not-found=true 2>/dev/null || true
+kubectl delete ingress \
+  -n "$NAMESPACE" \
+  -l "app.kubernetes.io/instance=jupyterhub" \
+  --ignore-not-found=true 2>/dev/null || true
+# Also remove by known name in case the label was not set on a previous run.
+kubectl delete ingress airflow-ingress airflow-webserver \
+  -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: airflow-webserver
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${AIRFLOW_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: airflow-webserver
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jupyterhub
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${JUPYTER_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: proxy-public
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-api
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${MINIO_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9000
+EOF
+echo "[OK] Service ingresses created."
+
 if [[ "$AIRFLOW_INSTALL_FAILED" == "true" ]]; then
   echo ""
   echo "⚠️  Deployment complete with warnings:"
@@ -871,8 +933,10 @@ echo "    If you want to use custom hostnames from another computer, add the"
 echo "    same host entries on that computer too."
 echo "  - ingress-nginx is configured as a LoadBalancer service in k3s so these"
 echo "    hostnames should resolve to the node IP on port 80/443."
-echo "  - Current chart exposure:"
-echo "      Grafana ingress is enabled."
-echo "      JupyterHub ingress is enabled at http://${JUPYTER_HOST}"
-echo "      Airflow ingress is enabled at http://${AIRFLOW_HOST}"
-echo "      MinIO ingress is enabled at http://${MINIO_HOST} (S3/API endpoint)"
+echo "  - Service endpoints (all ingress created in step 10):"
+echo "      Grafana   → http://${GRAFANA_HOST}"
+echo "      JupyterHub→ http://${JUPYTER_HOST}"
+echo "      Airflow   → http://${AIRFLOW_HOST}"
+echo "      MinIO API → http://${MINIO_HOST} (S3-compatible endpoint)"
+echo ""
+echo "  - Verify ingresses: kubectl get ingress -n ${NAMESPACE} -A"

@@ -105,6 +105,8 @@ createUserJob:
     - name: AIRFLOW_ADMIN_ROLE
       value: Admin
 
-# Ingress is configured dynamically via the AIRFLOW_INGRESS_VALUES temp file in
-# deploy-node.sh using ingress.apiServer.host (simple string) and ingress.apiServer.hosts
-# (object array) so the correct format is set regardless of chart minor version.
+# Ingress is NOT managed by this chart. deploy-node.sh passes
+#   --set ingress.web.enabled=false --set ingress.apiServer.enabled=false
+# and then creates the airflow-webserver Ingress resource via kubectl apply in step 10,
+# after all services are deployed. This avoids nginx admission webhook conflicts caused by
+# the chart producing host "_" when the wrong ingress key format is used for this version.

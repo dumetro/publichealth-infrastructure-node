@@ -21,13 +21,9 @@ proxy:
   service:
     type: ClusterIP
 
-ingress:
-  enabled: true
-  annotations:
-    kubernetes.io/ingress.class: nginx
-  ingressClassName: nginx
-  hosts:
-    - jupyter.dakar-datasphere-node.local
+# Ingress is created via kubectl apply at the end of deploy-node.sh (step 10) so that
+# all service ingresses are applied after every helm release is installed. This avoids
+# nginx admission webhook conflicts caused by chart-managed ingresses with wrong hosts.
 
 # This deployment uses a locally built single-user image imported into k3s.
 # Disable both chart pre-pullers so Helm upgrades do not block on registry pulls

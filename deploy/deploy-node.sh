@@ -5,7 +5,10 @@ CONFIG_FILE="config/env-config.yaml"
 NAMESPACE=$(yq e '.global.namespace' "$CONFIG_FILE")
 DOMAIN=$(yq e '.global.domain' "$CONFIG_FILE")
 JUPYTER_HOST=$(yq e '.jupyterhub.hostname' "$CONFIG_FILE")
+AIRFLOW_HOST=$(yq e '.airflow.hostname' "$CONFIG_FILE")
+MINIO_HOST=$(yq e '.minio.hostname' "$CONFIG_FILE")
 STORAGE_CLASS=$(yq e '.global.storageClass' "$CONFIG_FILE")
+export JUPYTER_HOST AIRFLOW_HOST MINIO_HOST
 
 POSTGRES_IMAGE_REPOSITORY=$(yq e '.postgres.image.repository' "$CONFIG_FILE")
 POSTGRES_IMAGE_TAG=$(yq e '.postgres.image.tag' "$CONFIG_FILE")
@@ -167,8 +170,11 @@ trap 'handle_unexpected_error' ERR
 TRINO_VALUES_RENDERED="$(mktemp)"
 GRAFANA_SECRET_VALUES="$(mktemp)"
 MINIO_SECRET_VALUES="$(mktemp)"
+MINIO_INGRESS_VALUES="$(mktemp)"
 POSTGRES_SECRET_VALUES="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
+AIRFLOW_INGRESS_VALUES="$(mktemp)"
+JUPYTER_INGRESS_VALUES="$(mktemp)"
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$MINIO_INGRESS_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_INGRESS_VALUES" "$JUPYTER_INGRESS_VALUES"' EXIT
 
 UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
 
@@ -188,9 +194,29 @@ yq e -n \
   > "$MINIO_SECRET_VALUES"
 
 yq e -n \
+  '.apiIngress.enabled          = true |
+   .apiIngress.ingressClassName = "nginx" |
+   .apiIngress.hostname         = strenv("MINIO_HOST")' \
+  > "$MINIO_INGRESS_VALUES"
+
+yq e -n \
   '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
    .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
   > "$POSTGRES_SECRET_VALUES"
+
+yq e -n \
+  '.ingress.apiServer.enabled          = true |
+   .ingress.apiServer.ingressClassName = "nginx" |
+   .ingress.apiServer.path             = "/" |
+   .ingress.apiServer.pathType         = "Prefix" |
+   .ingress.apiServer.hosts            = [{"name": strenv("AIRFLOW_HOST")}]' \
+  > "$AIRFLOW_INGRESS_VALUES"
+
+yq e -n \
+  '.ingress.enabled          = true |
+   .ingress.ingressClassName = "nginx" |
+   .ingress.hosts            = [strenv("JUPYTER_HOST")]' \
+  > "$JUPYTER_INGRESS_VALUES"
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
@@ -228,6 +254,7 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   -f "$MINIO_SECRET_VALUES" \
+  -f "$MINIO_INGRESS_VALUES" \
   --wait --timeout 10m
 # NOTE: The upstream MinIO image bundles the web console, but this Bitnami chart
 # still tries to deploy an obsolete standalone browser image by default. We disable
@@ -407,7 +434,7 @@ if [[ "$POSTGRES_APP_PASSWORD" != "$PGPASSWORD_APP" ]]; then
 fi
 
 TMP_INIT_SQL="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES" "$TMP_INIT_SQL"' EXIT
+trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$MINIO_INGRESS_VALUES" "$POSTGRES_SECRET_VALUES" "$AIRFLOW_INGRESS_VALUES" "$JUPYTER_INGRESS_VALUES" "$TMP_INIT_SQL"' EXIT
 cat > "$TMP_INIT_SQL" <<ENDSQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_APP_USER}') THEN
@@ -675,6 +702,7 @@ AIRFLOW_INSTALL_FAILED=false
 if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace "$NAMESPACE" \
   -f config/values/airflow-values.yaml \
+  -f "$AIRFLOW_INGRESS_VALUES" \
   --timeout 10m; then
   AIRFLOW_INSTALL_FAILED=true
   diagnose_current_step "helm upgrade --install airflow"
@@ -742,16 +770,36 @@ set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \
   -f config/values/jupyterhub-values.yaml \
-  --set-string ingress.hosts[0]="${JUPYTER_HOST}"
+  -f "$JUPYTER_INGRESS_VALUES"
 echo "[OK] JupyterHub deployed."
 
 # 9. Serving
+# KServe's default manifest creates cert-manager Certificate/Issuer resources for its
+# webhook. Install cert-manager first when those CRDs are missing.
+if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
+  set_checkpoint "cert-manager" "cert-manager" "cert-manager" "app.kubernetes.io/instance=cert-manager"
+  helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+    --namespace cert-manager \
+    --create-namespace \
+    --version v1.20.2 \
+    --set crds.enabled=true \
+    --wait --timeout 10m
+  echo "[OK] cert-manager deployed."
+fi
+
 # Download and apply KServe manifest (pinned version v0.11.0)
-set_checkpoint "KServe manifest apply" "$NAMESPACE" "" ""
+set_checkpoint "KServe manifest apply" "kserve" "" ""
 KSERVE_MANIFEST="deploy/kserve-v0.11.0.yaml"
 if [ ! -f "$KSERVE_MANIFEST" ]; then
   curl -fsSL https://github.com/kserve/kserve/releases/download/v0.11.0/kserve.yaml -o "$KSERVE_MANIFEST"
 fi
+
+if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
+  echo "ERROR: cert-manager CRDs are still missing after the cert-manager install step."
+  echo "KServe requires cert-manager Certificate and Issuer CRDs before its manifest can be applied."
+  exit 1
+fi
+
 kubectl apply -f "$KSERVE_MANIFEST"
 echo "[OK] KServe manifest applied."
 
@@ -766,3 +814,22 @@ if [[ "$AIRFLOW_INSTALL_FAILED" == "true" ]]; then
 else
   echo "✅ Deployment Complete! Node is ready."
 fi
+
+echo ""
+echo "Access notes:"
+echo "  - Helm may print 'kubectl port-forward ...' examples for some services."
+echo "    These are optional local-debug commands, not required deploy steps."
+echo "  - Do not auto-run those port-forwards for LAN access: they bind to"
+echo "    localhost on the machine that runs them."
+echo "  - deploy/dev-proxy.sh uses portless plus kubectl port-forward and is"
+echo "    also local to the machine where you run it."
+echo "  - bootstrap.sh only added host aliases to /etc/hosts on the server."
+echo "    If you want to use custom hostnames from another computer, add the"
+echo "    same host entries on that computer too."
+echo "  - ingress-nginx is configured as a LoadBalancer service in k3s so these"
+echo "    hostnames should resolve to the node IP on port 80/443."
+echo "  - Current chart exposure:"
+echo "      Grafana ingress is enabled."
+echo "      JupyterHub ingress is enabled at http://${JUPYTER_HOST}"
+echo "      Airflow ingress is enabled at http://${AIRFLOW_HOST}"
+echo "      MinIO ingress is enabled at http://${MINIO_HOST} (S3/API endpoint)"

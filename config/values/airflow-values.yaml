@@ -105,11 +105,6 @@ createUserJob:
     - name: AIRFLOW_ADMIN_ROLE
       value: Admin
 
-ingress:
-  apiServer:
-    enabled: true
-    ingressClassName: nginx
-    path: /
-    pathType: Prefix
-    hosts:
-      - name: airflow.dakar-datasphere-node.local
+# Ingress is configured dynamically via the AIRFLOW_INGRESS_VALUES temp file in
+# deploy-node.sh using ingress.apiServer.host (simple string) and ingress.apiServer.hosts
+# (object array) so the correct format is set regardless of chart minor version.

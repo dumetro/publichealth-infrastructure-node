@@ -216,12 +216,17 @@ yq e -n \
   > "$POSTGRES_SECRET_VALUES"
 
 yq e -n \
-  '.ingress.apiServer.enabled          = true |
+  '.ingress.web.enabled                = false |
+   .ingress.apiServer.enabled          = true |
    .ingress.apiServer.ingressClassName = "nginx" |
    .ingress.apiServer.path             = "/" |
    .ingress.apiServer.pathType         = "Prefix" |
+   .ingress.apiServer.host             = strenv("AIRFLOW_HOST") |
    .ingress.apiServer.hosts            = [{"name": strenv("AIRFLOW_HOST")}]' \
   > "$AIRFLOW_INGRESS_VALUES"
+# Note: both `host` (simple string) and `hosts[0].name` (object array) are set because
+# different minor versions of the apache-airflow Helm chart use one or the other.
+# The chart will use whichever its template reads; the other key is silently ignored.
 
 yq e -n \
   '.ingress.enabled          = true |
@@ -775,6 +780,17 @@ if [[ -d "./charts/mlflow" ]]; then
   echo "[OK] MLflow deployed."
 else
   echo "WARN: ./charts/mlflow not found; skipping MLflow Helm release."
+fi
+
+# Delete any stale Airflow ingress that has an empty/catch-all host (_).
+# When the Airflow install runs with a wrong ingress format it creates an ingress with
+# host "_", which the nginx admission webhook then treats as a duplicate catch-all and
+# blocks any subsequent JupyterHub upgrade that also routes path "/".
+AIRFLOW_INGRESS_HOST="$(kubectl get ingress airflow-ingress -n "$NAMESPACE" \
+  -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)"
+if [[ -z "$AIRFLOW_INGRESS_HOST" || "$AIRFLOW_INGRESS_HOST" == "_" ]]; then
+  echo "  -> Removing stale airflow-ingress (host is '${AIRFLOW_INGRESS_HOST:-empty}' — catch-all conflicts with JupyterHub)."
+  kubectl delete ingress airflow-ingress -n "$NAMESPACE" --ignore-not-found=true
 fi
 
 set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"

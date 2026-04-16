@@ -28,6 +28,15 @@ ingress:
   hosts:
     - jupyter.dakar-datasphere-node.local
 
+# This deployment uses a locally built single-user image imported into k3s.
+# Disable both chart pre-pullers so Helm upgrades do not block on registry pulls
+# for the `latest` tag.
+prePuller:
+  hook:
+    enabled: false
+  continuous:
+    enabled: false
+
 singleuser:
   # Built by bootstrap.sh and imported into k3s containerd
   image:

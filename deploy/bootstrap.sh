@@ -407,9 +407,14 @@ DOCKER_BUILDKIT=1 docker build -t "$IMAGE_TAG" "$JUPYTER_BUILD_CTX"
 echo "  -> Image built: $IMAGE_TAG"
 
 # Import into k3s containerd so pods can pull with imagePullPolicy: Never
-echo "  -> Importing image into k3s containerd runtime..."
-docker save "$IMAGE_TAG" | k3s ctr images import -
-echo "  -> Image available in k3s: $IMAGE_TAG"
+K3S_JUPYTER_IMAGE_LIST="$(k3s ctr images list 2>/dev/null || true)"
+if grep -q 'jupyter-health-env:latest' <<< "$K3S_JUPYTER_IMAGE_LIST"; then
+  echo "  -> Image already available in k3s: $IMAGE_TAG"
+else
+  echo "  -> Importing image into k3s containerd runtime..."
+  docker save "$IMAGE_TAG" | k3s ctr images import -
+  echo "  -> Image imported into k3s: $IMAGE_TAG"
+fi
 
 # ---- 9. Build & import PostgreSQL image with postgis + pgvector ------
 echo ""

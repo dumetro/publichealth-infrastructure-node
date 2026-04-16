@@ -106,5 +106,10 @@ createUserJob:
       value: Admin
 
 ingress:
-  web:
-    enabled: false
+  apiServer:
+    enabled: true
+    ingressClassName: nginx
+    path: /
+    pathType: Prefix
+    hosts:
+      - name: airflow.dakar-datasphere-node.local

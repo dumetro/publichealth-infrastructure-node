@@ -30,6 +30,7 @@ minio:
   rootUser: "admin"
   # Set MINIO_ROOT_PASSWORD in your shell before deploy; never commit real secrets.
   rootPassword: "CHANGEME"
+  hostname: "minio.dakar-datasphere-node.local"
   buckets:
     - raw
     - standard
@@ -42,6 +43,9 @@ unity_catalog:
 jupyterhub:
   auth_type: "dummy"
   hostname: "jupyter.dakar-datasphere-node.local"
+
+airflow:
+  hostname: "airflow.dakar-datasphere-node.local"
 
 mlflow:
   s3_endpoint: "http://minio.data-stack.svc.cluster.local:9000"

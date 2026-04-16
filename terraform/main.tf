@@ -138,6 +138,16 @@ resource "helm_release" "minio" {
   chart      = "minio"
   namespace  = kubernetes_namespace.data_stack.metadata[0].name
 
+  values = [
+    yamlencode({
+      apiIngress = {
+        enabled          = true
+        ingressClassName = "nginx"
+        hostname         = "minio.${var.domain}"
+      }
+    })
+  ]
+
   set {
     name  = "auth.rootUser"
     value = var.minio_root_user
@@ -543,7 +553,22 @@ resource "helm_release" "airflow" {
   namespace  = kubernetes_namespace.data_stack.metadata[0].name
 
   values = [
-    file("${path.module}/../config/values/airflow-values.yaml")
+    file("${path.module}/../config/values/airflow-values.yaml"),
+    yamlencode({
+      ingress = {
+        apiServer = {
+          enabled          = true
+          ingressClassName = "nginx"
+          path             = "/"
+          pathType         = "Prefix"
+          hosts = [
+            {
+              name = "airflow.${var.domain}"
+            }
+          ]
+        }
+      }
+    })
   ]
 
   depends_on = [
@@ -562,13 +587,15 @@ resource "helm_release" "jupyterhub" {
   namespace  = kubernetes_namespace.data_stack.metadata[0].name
 
   values = [
-    file("${path.module}/../config/values/jupyterhub-values.yaml")
+    file("${path.module}/../config/values/jupyterhub-values.yaml"),
+    yamlencode({
+      ingress = {
+        enabled          = true
+        ingressClassName = "nginx"
+        hosts            = ["jupyter.${var.domain}"]
+      }
+    })
   ]
-
-  set {
-    name  = "ingress.hosts[0]"
-    value = "jupyter.${var.domain}"
-  }
 
   depends_on = [
     kubernetes_secret.minio_creds,

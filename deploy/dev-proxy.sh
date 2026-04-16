@@ -80,9 +80,8 @@ portless proxy start 2>/dev/null || true
 declare -a SERVICES=(
   "grafana.dakar-datasphere-node     monitoring    svc/monitoring-grafana                80"
   "jupyter.dakar-datasphere-node     data-stack    svc/proxy-public                      80"
-  "minio.dakar-datasphere-node       data-stack    svc/minio                             9001"
-  "minio-api.dakar-datasphere-node   data-stack    svc/minio                             9000"
-  "airflow.dakar-datasphere-node     data-stack    svc/airflow-webserver                 8080"
+  "minio.dakar-datasphere-node       data-stack    svc/minio                             9000"
+  "airflow.dakar-datasphere-node     data-stack    svc/airflow-api-server                8080"
   "mlflow.dakar-datasphere-node      data-stack    svc/mlflow                            5000"
   "trino.dakar-datasphere-node       data-stack    svc/trino                             8080"
   "pgbouncer.dakar-datasphere-node   data-stack    svc/pgbouncer                         5432"

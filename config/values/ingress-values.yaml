@@ -1,7 +1,7 @@
 controller:
   replicaCount: 1
   service:
-    type: NodePort
+    type: LoadBalancer
   config:
     use-forwarded-headers: "true"
     proxy-real-ip-cidr: "0.0.0.0/0"

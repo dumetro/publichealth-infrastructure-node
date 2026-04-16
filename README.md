@@ -176,7 +176,7 @@ Bootstrap only provisions the platform layer. Application workloads are deployed
 
 ### Service endpoints
 
-After `deploy-node.sh` and `dev-proxy.sh` complete, services are reachable via portless (port 1355) from the host machine, and via in-cluster DNS from within pods.
+After `deploy-node.sh` and `dev-proxy.sh` complete, services are reachable via portless (port 1355) from the same machine that runs `deploy/dev-proxy.sh`, and via in-cluster DNS from within pods.
 
 #### Host access (via portless on port 1355)
 
@@ -187,23 +187,29 @@ After `deploy-node.sh` and `dev-proxy.sh` complete, services are reachable via p
 | Airflow | http://airflow.dakar-datasphere-node.localhost:1355 |
 | MLflow | http://mlflow.dakar-datasphere-node.localhost:1355 |
 | Trino | http://trino.dakar-datasphere-node.localhost:1355 |
-| MinIO | http://minio.dakar-datasphere-node.localhost:1355 |
+| MinIO API | http://minio.dakar-datasphere-node.localhost:1355 |
 | PgBouncer | http://pgbouncer.dakar-datasphere-node.localhost:1355 |
 | PostgreSQL | http://postgres.dakar-datasphere-node.localhost:1355 |
 
-#### In-cluster ingress (add node IP to `/etc/hosts`)
+#### Host aliases and ingress notes
 
-Add the node's IP to `/etc/hosts` (replace `<NODE_IP>` with the output of `hostname -I | awk '{print $1}'`):
+Add the node's IP to `/etc/hosts` on the machine you want to browse from (replace `<NODE_IP>` with the output of `hostname -I | awk '{print $1}'`):
 
 ```
+<NODE_IP>  airflow.dakar-datasphere-node.local
 <NODE_IP>  jupyter.dakar-datasphere-node.local
+<NODE_IP>  minio.dakar-datasphere-node.local
 <NODE_IP>  grafana.dakar-datasphere-node.local
 ```
 
-| Service | Hostname |
-|---------|----------|
-| JupyterHub | http://jupyter.dakar-datasphere-node.local |
-| Grafana | http://grafana.dakar-datasphere-node.local |
+| Service | Hostname | Status |
+|---------|----------|--------|
+| Airflow | http://airflow.dakar-datasphere-node.local | Ingress enabled |
+| JupyterHub | http://jupyter.dakar-datasphere-node.local | Ingress enabled |
+| MinIO API | http://minio.dakar-datasphere-node.local | Ingress enabled |
+| Grafana | http://grafana.dakar-datasphere-node.local | Ingress enabled |
+
+These hostnames assume the `ingress-nginx` controller is reachable on the node IP. In this repo it is configured as a `LoadBalancer` service so k3s ServiceLB can expose ports 80/443 on the node.
 
 #### In-cluster service DNS (pod-to-pod)
 

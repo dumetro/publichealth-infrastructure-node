@@ -733,6 +733,11 @@ if command -v k3s >/dev/null 2>&1; then
   fi
 fi
 
+# Clean up stale JupyterHub hook puller resources from prior failed upgrades.
+# The chart config disables these hooks for locally imported images.
+kubectl delete job hook-image-awaiter -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+kubectl delete daemonset hook-image-puller -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+
 set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 helm upgrade --install jupyterhub jupyterhub/jupyterhub \
   --namespace "$NAMESPACE" \

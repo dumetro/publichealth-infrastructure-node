@@ -161,6 +161,17 @@ handle_unexpected_error() {
 
   trap - ERR
   set +e
+
+  # 130 = Ctrl+C (SIGINT), 143 = SIGTERM — user-initiated interrupt.
+  # When kubectl receives SIGINT it exits 130, which fires ERR before bash
+  # can handle INT. Don't dump diagnostics for a deliberate cancellation.
+  if [[ $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+    echo ""
+    echo "[INTERRUPTED] Deployment cancelled. No automatic rollback was performed."
+    echo "  PostgreSQL data and PVCs are intact. Re-run deploy-node.sh to continue."
+    exit "$exit_code"
+  fi
+
   diagnose_current_step "$failed_command"
   exit "$exit_code"
 }
@@ -295,15 +306,31 @@ echo "[OK] MinIO deployed."
 # updates to volumeClaimTemplates and selector fields (e.g. leftover from a failed Bitnami
 # install). The PVC is preserved so data survives across re-deploys.
 set_checkpoint "PostgreSQL StatefulSet" "$NAMESPACE" "" "app=postgresql"
+# Only delete the StatefulSet if its selector doesn't match ours. When it already uses
+# app=postgresql (created by a prior run of this script), kubectl apply can update it in
+# place — no delete needed. The delete-first path is for cleaning up a leftover Bitnami
+# Helm install whose selector (app.kubernetes.io/instance=postgresql) differs from ours
+# and would cause apply to fail on the immutable selector field.
+#
+# When deletion IS required, --wait=false returns immediately; we then use kubectl wait
+# --for=delete so the object is truly gone before we create the new one, with a hard
+# timeout instead of blocking indefinitely.
 if kubectl get statefulset postgresql -n "$NAMESPACE" >/dev/null 2>&1; then
-  echo "  -> Removing existing postgresql StatefulSet (PVC preserved)..."
-  kubectl delete statefulset postgresql -n "$NAMESPACE" --cascade=orphan
+  EXISTING_STS_APP_LABEL="$(kubectl get statefulset postgresql -n "$NAMESPACE" \
+    -o jsonpath='{.spec.selector.matchLabels.app}' 2>/dev/null || true)"
+  if [[ "$EXISTING_STS_APP_LABEL" == "postgresql" ]]; then
+    echo "  -> Existing postgresql StatefulSet matches our spec — skipping delete (apply will update in place)."
+  else
+    echo "  -> Removing Bitnami-style postgresql StatefulSet (different selector — PVC preserved)..."
+    kubectl delete statefulset postgresql -n "$NAMESPACE" --cascade=orphan --wait=false
+    if ! kubectl wait --for=delete statefulset/postgresql -n "$NAMESPACE" --timeout=60s 2>/dev/null; then
+      echo "WARN: StatefulSet did not disappear within 60s; proceeding anyway."
+    fi
+    # Delete the now-orphaned pod so the new StatefulSet starts fresh.
+    kubectl delete pod postgresql-0 -n "$NAMESPACE" --ignore-not-found=true --timeout=60s || true
+  fi
 fi
-# Also delete the orphaned pod so the new StatefulSet creates a clean one.
-# --cascade=orphan leaves the pod running; it may reference stale Bitnami ConfigMaps
-# that no longer exist (e.g. postgresql-extended-configuration deleted by helm uninstall).
-kubectl delete pod postgresql-0 -n "$NAMESPACE" --ignore-not-found=true
-# Uninstall any leftover Bitnami helm release for postgresql
+# Uninstall any leftover Bitnami helm release for postgresql (idempotent; no-op if absent)
 helm uninstall postgresql -n "$NAMESPACE" 2>/dev/null || true
 
 cat <<EOF | kubectl apply -f -

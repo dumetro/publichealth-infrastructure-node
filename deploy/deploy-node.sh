@@ -758,7 +758,7 @@ fi
 
 set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
 if command -v k3s >/dev/null 2>&1; then
-  K3S_IMAGE_LIST="$(k3s ctr images list 2>/dev/null || true)"
+  K3S_IMAGE_LIST="$(sudo -n k3s ctr --namespace k8s.io images ls 2>/dev/null || true)"
   if ! grep -q 'jupyter-health-env:latest' <<< "$K3S_IMAGE_LIST"; then
     echo "ERROR: Required local image 'jupyter-health-env:latest' is not present in k3s containerd."
     echo "Run sudo -E bash deploy/bootstrap.sh on this server, or import the image manually,"

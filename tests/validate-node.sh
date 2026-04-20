@@ -53,6 +53,13 @@ check_status "Prometheus" "monitoring" "app.kubernetes.io/name=prometheus" 1
 check_status "Grafana" "monitoring" "app.kubernetes.io/name=grafana" 1
 check_status "AlertManager" "monitoring" "app.kubernetes.io/name=alertmanager" 1
 
+GRAFANA_READY=$(kubectl get pods -n "monitoring" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+if [[ "$GRAFANA_READY" == "True" ]]; then
+  echo "  ✓ Grafana: web UI accessible (dashboards available)"
+else
+  echo "  ℹ Grafana: starting up"
+fi
+
 # Step 2: Ingress Gateway
 echo ""
 echo "🚪 Step 2: Ingress Gateway"
@@ -134,6 +141,13 @@ if kubectl get release airflow -n "$NAMESPACE" >/dev/null 2>&1; then
     echo "  ⚠ Airflow migrations: not started or unknown state"
     ((WARNINGS++))
   fi
+
+  WEBSERVER_READY=$(kubectl get pods -n "$NAMESPACE" -l release=airflow,component=webserver -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+  if [[ "$WEBSERVER_READY" == "True" ]]; then
+    echo "  ✓ Airflow webserver: ready (UI accessible)"
+  else
+    echo "  ℹ Airflow webserver: starting up"
+  fi
 else
   echo "  ✗ Airflow: not deployed"
   ((ERRORS++))
@@ -144,6 +158,13 @@ echo ""
 echo "🧪 Step 8: ML & Workspace"
 check_status "JupyterHub Hub" "$NAMESPACE" "app.kubernetes.io/instance=jupyterhub,app.kubernetes.io/component=hub" 1
 check_status "JupyterHub Proxy" "$NAMESPACE" "app.kubernetes.io/instance=jupyterhub,app.kubernetes.io/component=proxy" 1
+
+HUB_READY=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=jupyterhub,app.kubernetes.io/component=hub -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+if [[ "$HUB_READY" == "True" ]]; then
+  echo "  ✓ JupyterHub: web UI accessible"
+else
+  echo "  ℹ JupyterHub: starting up"
+fi
 
 if kubectl get deployment -n "$NAMESPACE" -l app.kubernetes.io/instance=mlflow >/dev/null 2>&1; then
   check_status "MLflow" "$NAMESPACE" "app.kubernetes.io/instance=mlflow" 1
@@ -193,20 +214,40 @@ echo "  Alternative: Use MinIO Client (mc) to create buckets:"
 echo "    mc alias set minio http://${MINIO_HOST}:9000 admin <password>"
 echo "    mc mb minio/raw minio/standard minio/published"
 echo ""
-echo "Airflow Webserver:"
+echo "Airflow Webserver & Console:"
 echo "  URL: http://${AIRFLOW_HOST}"
 echo "  Admin User: admin"
-echo "  Password: (from airflow-secrets secret)"
+echo "  Admin Password: (from airflow-secrets secret, key: admin_password)"
+echo "    Get it: kubectl get secret airflow-secrets -n $NAMESPACE -o jsonpath='{.data.admin_password}' | base64 -d"
+echo "  Features:"
+echo "    - DAG management & visualization"
+echo "    - Workflow monitoring & logs"
+echo "    - Task scheduling & execution"
 echo ""
-echo "JupyterHub:"
+echo "JupyterHub Workspace:"
 echo "  URL: http://${JUPYTER_HOST}"
 echo "  Admin User: admin"
-echo "  Password: (from jupyterhub-values.yaml DummyAuthenticator.password)"
+echo "  Password: (from config/values/jupyterhub-values.yaml, hub.config.DummyAuthenticator.password)"
+echo "  Features:"
+echo "    - Multi-user Jupyter notebooks"
+echo "    - Pre-configured kernels (Python, SQL, etc.)"
+echo "    - Direct access to PostgreSQL, MinIO, MLflow, Spark"
+echo "    - Persistent home directories per user"
+echo "    - Profile selection (Standard 1CPU/2GB, Large 2CPU/4GB)"
 echo ""
-echo "Grafana:"
+echo "Grafana Monitoring & Dashboards:"
 echo "  URL: http://${GRAFANA_HOST}"
 echo "  Admin User: admin"
-echo "  Password: (from GRAFANA_ADMIN_PASSWORD env var)"
+echo "  Admin Password: (from GRAFANA_ADMIN_PASSWORD environment variable)"
+echo "    Get it: kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d"
+echo "  Data Sources:"
+echo "    - Prometheus (cluster metrics, node stats, pod performance)"
+echo "    - AlertManager (alerts & notifications)"
+echo "  Pre-built Dashboards:"
+echo "    - Kubernetes cluster overview"
+echo "    - Pod & container resource usage"
+echo "    - Network I/O & latency"
+echo "    - Node memory/CPU pressure"
 echo ""
 
 # Summary

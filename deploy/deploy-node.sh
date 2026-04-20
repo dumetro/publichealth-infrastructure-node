@@ -31,6 +31,7 @@ MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-}"
 if [[ -z "$MINIO_ROOT_PASSWORD" ]]; then
   MINIO_ROOT_PASSWORD="$(yq e '.minio.rootPassword' "$CONFIG_FILE")"
 fi
+MINIO_PERSISTENCE_SIZE=$(yq e '.minio.persistence.size' "$CONFIG_FILE")
 
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
 if [[ -z "$GRAFANA_ADMIN_PASSWORD" ]]; then
@@ -243,6 +244,7 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   --set apiIngress.enabled=false \
+  --set-string persistence.size="$MINIO_PERSISTENCE_SIZE" \
   -f "$MINIO_SECRET_VALUES" \
   --wait --timeout 10m
 # NOTE: The upstream MinIO image bundles the web console, but this Bitnami chart

@@ -31,6 +31,8 @@ minio:
   # Set MINIO_ROOT_PASSWORD in your shell before deploy; never commit real secrets.
   rootPassword: "CHANGEME"
   hostname: "minio.dakar-datasphere-node.local"
+  persistence:
+    size: "250Gi"
   buckets:
     - raw
     - standard

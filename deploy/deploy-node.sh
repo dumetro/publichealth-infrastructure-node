@@ -198,7 +198,7 @@ yq e -n \
 yq e -n \
   '.auth.rootPassword     = strenv("MINIO_ROOT_PASSWORD") |
    .auth.usePasswordFiles = false |
-   .console.enabled       = false |
+   .console.enabled       = true |
    .command               = ["minio"] |
    .args                  = ["server", "/bitnami/minio/data"]' \
   > "$MINIO_SECRET_VALUES"

@@ -218,6 +218,81 @@ These hostnames assume the `ingress-nginx` controller is reachable on the node I
 | PostgreSQL (direct) | `postgresql.data-stack.svc.cluster.local` | 5432 |
 | PostgreSQL (via PgBouncer) | `pgbouncer.data-stack.svc.cluster.local` | 5432 |
 
+## Web Console Access
+
+After deployment, the following web consoles are available for interactive access:
+
+### Console Matrix
+
+| Console | URL | User | Purpose |
+|---------|-----|------|---------|
+| **Airflow Webserver** | http://airflow.dakar-datasphere-node.local | admin | DAG orchestration, workflow scheduling, task monitoring & logs |
+| **JupyterHub** | http://jupyter.dakar-datasphere-node.local | admin | Interactive notebooks, data exploration, SQL queries, model development |
+| **MinIO Console** | http://minio.dakar-datasphere-node.local:9001 | admin | S3-compatible object storage: bucket management, file upload, access control |
+| **Grafana** | http://grafana.dakar-datasphere-node.local | admin | Cluster monitoring, performance dashboards, alerting |
+
+### Credential Retrieval
+
+```bash
+# Airflow admin password
+kubectl get secret airflow-secrets -n data-stack -o jsonpath='{.data.admin_password}' | base64 -d
+
+# JupyterHub password
+grep "password:" config/values/jupyterhub-values.yaml | tail -1
+
+# MinIO root password
+kubectl get secret minio -n data-stack -o jsonpath='{.data.root-password}' | base64 -d
+
+# Grafana admin password
+kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+### Service Features
+
+#### Airflow Webserver
+- Visualize and manage DAGs (directed acyclic graphs)
+- Monitor workflow runs, task status, and execution history
+- View task logs and error messages in real-time
+- Trigger manual DAG runs with custom parameters
+- Create and manage connections to external systems
+- Manage pools and variables for workflow logic
+
+#### JupyterHub
+- Multi-user notebook environment with persistent home directories
+- Pre-configured Python/SQL kernels with data stack libraries
+- Direct access to PostgreSQL, MinIO (S3), MLflow, Spark, and Trino
+- Selectable compute profiles (1CPU/2GB or 2CPU/4GB)
+- Automatic idle pod culling to reclaim resources
+- Support for JupyterLab extensions and custom environments
+
+#### MinIO Console
+- S3-compatible bucket management (create, delete, configure)
+- Drag-and-drop file upload to buckets
+- Browse object contents and metadata
+- Manage access keys and bucket policies
+- Version control and lifecycle management
+- Audit logs and usage metrics
+
+#### Grafana
+- Pre-built Kubernetes cluster dashboards
+- Real-time monitoring of node resource usage (CPU, memory, disk)
+- Pod and container performance metrics
+- Network I/O and latency tracking
+- Alert manager integration for incident response
+- Custom dashboard creation for application-specific metrics
+
+### Access from Remote Machine
+
+If accessing from a different machine than the deployment server:
+
+1. **Add node IP to `/etc/hosts`:**
+   ```bash
+   echo "<NODE_IP>  airflow.dakar-datasphere-node.local jupyter.dakar-datasphere-node.local minio.dakar-datasphere-node.local grafana.dakar-datasphere-node.local" >> /etc/hosts
+   ```
+   (Replace `<NODE_IP>` with the result of `hostname -I | awk '{print $1}'` on the deployment server)
+
+2. **Access via ingress hostnames** (port 80, proxied through ingress-nginx LoadBalancer)
+
 Notes:
 
 - Local charts are optional. If charts/unity-catalog or charts/mlflow are missing, deploy-node.sh skips those releases with a warning.

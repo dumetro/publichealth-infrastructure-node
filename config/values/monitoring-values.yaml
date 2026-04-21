@@ -2,6 +2,7 @@ grafana:
   adminPassword: "CHANGEME"
   ingress:
     enabled: true
+    ingressClassName: nginx
     hosts:
       - grafana.dakar-datasphere-node.local
   persistence:

@@ -7,9 +7,10 @@ DOMAIN=$(yq e '.global.domain' "$CONFIG_FILE")
 JUPYTER_HOST=$(yq e '.jupyterhub.hostname' "$CONFIG_FILE")
 AIRFLOW_HOST=$(yq e '.airflow.hostname' "$CONFIG_FILE")
 MINIO_HOST=$(yq e '.minio.hostname' "$CONFIG_FILE")
+MINIO_CONSOLE_HOST="console.${DOMAIN}"
 GRAFANA_HOST=$(yq e '.monitoring.grafana.domain' "$CONFIG_FILE")
 STORAGE_CLASS=$(yq e '.global.storageClass' "$CONFIG_FILE")
-export JUPYTER_HOST AIRFLOW_HOST MINIO_HOST GRAFANA_HOST
+export JUPYTER_HOST AIRFLOW_HOST MINIO_HOST MINIO_CONSOLE_HOST GRAFANA_HOST
 
 POSTGRES_IMAGE_REPOSITORY=$(yq e '.postgres.image.repository' "$CONFIG_FILE")
 POSTGRES_IMAGE_TAG=$(yq e '.postgres.image.tag' "$CONFIG_FILE")
@@ -196,11 +197,16 @@ yq e -n \
   > "$GRAFANA_SECRET_VALUES"
 
 yq e -n \
-  '.auth.rootPassword     = strenv("MINIO_ROOT_PASSWORD") |
-   .auth.usePasswordFiles = false |
-   .console.enabled       = true |
-   .command               = ["minio"] |
-   .args                  = ["server", "/bitnami/minio/data"]' \
+  '.auth.rootPassword                          = strenv("MINIO_ROOT_PASSWORD") |
+   .auth.usePasswordFiles                      = false |
+   .console.enabled                            = false |
+   .command                                    = ["minio"] |
+   .args                                       = ["server", "/bitnami/minio/data", "--console-address", ":9001"] |
+   .extraContainerPorts[0].name                = "console" |
+   .extraContainerPorts[0].containerPort       = 9001 |
+   .service.extraPorts[0].name                 = "console" |
+   .service.extraPorts[0].port                 = 9001 |
+   .service.extraPorts[0].targetPort           = 9001' \
   > "$MINIO_SECRET_VALUES"
 
 yq e -n \
@@ -242,16 +248,19 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.registry="quay.io" \
   --set-string clientImage.repository="minio/mc" \
   --set-string clientImage.tag="latest" \
-  --set-string console.image.registry="quay.io" \
-  --set-string console.image.repository="minio/console" \
-  --set-string console.image.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   --set apiIngress.enabled=false \
   --set-string persistence.size="$MINIO_PERSISTENCE_SIZE" \
+  --set-string extraEnvVars[0].name="MINIO_BROWSER" \
+  --set-string extraEnvVars[0].value="on" \
+  --set-string extraEnvVars[1].name="MINIO_CONSOLE_ADDRESS" \
+  --set-string extraEnvVars[1].value=":9001" \
   -f "$MINIO_SECRET_VALUES" \
   --wait --timeout 10m
-# NOTE: All three MinIO images (server, client, console) are overridden to use the
-# official quay.io/minio/* images because Bitnami registry requires a paid subscription.
+# NOTE: The standalone MinIO console image was deprecated and merged into the server
+# binary since RELEASE.2022-11+. We disable the Bitnami chart's separate console
+# Deployment (.console.enabled=false) and enable the built-in console via MINIO_BROWSER=on.
+# The console listens on port 9001 inside the MinIO server pod (--console-address :9001).
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
 
@@ -909,6 +918,29 @@ spec:
                 name: minio
                 port:
                   number: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${MINIO_CONSOLE_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001
 EOF
 echo "[OK] Service ingresses created."
 
@@ -938,9 +970,10 @@ echo "    same host entries on that computer too."
 echo "  - ingress-nginx is configured as a LoadBalancer service in k3s so these"
 echo "    hostnames should resolve to the node IP on port 80/443."
 echo "  - Service endpoints (all ingress created in step 10):"
-echo "      Grafana   → http://${GRAFANA_HOST}"
-echo "      JupyterHub→ http://${JUPYTER_HOST}"
-echo "      Airflow   → http://${AIRFLOW_HOST}"
-echo "      MinIO API → http://${MINIO_HOST} (S3-compatible endpoint)"
+echo "      Grafana       → http://${GRAFANA_HOST}"
+echo "      JupyterHub    → http://${JUPYTER_HOST}"
+echo "      Airflow       → http://${AIRFLOW_HOST}"
+echo "      MinIO API     → http://${MINIO_HOST} (S3-compatible endpoint)"
+echo "      MinIO Console → http://${MINIO_CONSOLE_HOST} (web UI for bucket management)"
 echo ""
-echo "  - Verify ingresses: kubectl get ingress -n ${NAMESPACE} -A"
+echo "  - Verify ingresses: kubectl get ingress -n ${NAMESPACE}"

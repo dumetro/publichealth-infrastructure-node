@@ -228,7 +228,7 @@ After deployment, the following web consoles are available for interactive acces
 |---------|-----|------|---------|
 | **Airflow Webserver** | http://airflow.dakar-datasphere-node.local | admin | DAG orchestration, workflow scheduling, task monitoring & logs |
 | **JupyterHub** | http://jupyter.dakar-datasphere-node.local | admin | Interactive notebooks, data exploration, SQL queries, model development |
-| **MinIO Console** | http://minio.dakar-datasphere-node.local:9001 | admin | S3-compatible object storage: bucket management, file upload, access control |
+| **MinIO Console** | http://console.dakar-datasphere-node.local | admin | S3-compatible object storage: bucket management, file upload, access control |
 | **Grafana** | http://grafana.dakar-datasphere-node.local | admin | Cluster monitoring, performance dashboards, alerting |
 
 ### Credential Retrieval
@@ -287,7 +287,7 @@ If accessing from a different machine than the deployment server:
 
 1. **Add node IP to `/etc/hosts`:**
    ```bash
-   echo "<NODE_IP>  airflow.dakar-datasphere-node.local jupyter.dakar-datasphere-node.local minio.dakar-datasphere-node.local grafana.dakar-datasphere-node.local" >> /etc/hosts
+   echo "<NODE_IP>  airflow.dakar-datasphere-node.local jupyter.dakar-datasphere-node.local minio.dakar-datasphere-node.local console.dakar-datasphere-node.local grafana.dakar-datasphere-node.local" >> /etc/hosts
    ```
    (Replace `<NODE_IP>` with the result of `hostname -I | awk '{print $1}'` on the deployment server)
 

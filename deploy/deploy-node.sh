@@ -242,14 +242,16 @@ helm upgrade --install minio bitnami/minio \
   --set-string clientImage.registry="quay.io" \
   --set-string clientImage.repository="minio/mc" \
   --set-string clientImage.tag="latest" \
+  --set-string console.image.registry="quay.io" \
+  --set-string console.image.repository="minio/console" \
+  --set-string console.image.tag="latest" \
   --set-string auth.rootUser="$MINIO_ROOT_USER" \
   --set apiIngress.enabled=false \
   --set-string persistence.size="$MINIO_PERSISTENCE_SIZE" \
   -f "$MINIO_SECRET_VALUES" \
   --wait --timeout 10m
-# NOTE: The upstream MinIO image bundles the web console, but this Bitnami chart
-# still tries to deploy an obsolete standalone browser image by default. We disable
-# that console deployment above to keep the release functional.
+# NOTE: All three MinIO images (server, client, console) are overridden to use the
+# official quay.io/minio/* images because Bitnami registry requires a paid subscription.
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
 

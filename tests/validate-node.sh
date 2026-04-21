@@ -188,7 +188,7 @@ fi
 # Step 10: Ingresses
 echo ""
 echo "🌐 Step 10: Service Ingresses"
-check_resource "ingress" "airflow-webserver" "$NAMESPACE"
+check_resource "ingress" "airflow-api-server" "$NAMESPACE"
 check_resource "ingress" "jupyterhub" "$NAMESPACE"
 check_resource "ingress" "minio-api" "$NAMESPACE"
 check_resource "ingress" "minio-console" "$NAMESPACE"

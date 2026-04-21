@@ -845,14 +845,14 @@ kubectl delete ingress \
   -l "app.kubernetes.io/instance=jupyterhub" \
   --ignore-not-found=true 2>/dev/null || true
 # Also remove by known name in case the label was not set on a previous run.
-kubectl delete ingress airflow-ingress airflow-webserver \
+kubectl delete ingress airflow-ingress airflow-webserver airflow-api-server \
   -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
 
 cat <<EOF | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: airflow-webserver
+  name: airflow-api-server
   namespace: ${NAMESPACE}
   annotations:
     kubernetes.io/ingress.class: nginx
@@ -868,7 +868,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: airflow-webserver
+                name: airflow-api-server
                 port:
                   number: 8080
 ---

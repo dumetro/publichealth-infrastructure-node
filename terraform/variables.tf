@@ -28,6 +28,18 @@ variable "minio_root_password" {
   sensitive   = true
 }
 
+variable "minio_persistence_size" {
+  description = "PVC size for MinIO data volume."
+  type        = string
+  default     = "250Gi"
+}
+
+variable "minio_buckets" {
+  description = "Buckets to create in MinIO (manual step after deploy)."
+  type        = list(string)
+  default     = ["raw", "standard", "published"]
+}
+
 variable "unity_catalog_admin_token" {
   description = "Unity Catalog admin access token."
   type        = string
@@ -56,18 +68,6 @@ variable "airflow_admin_password" {
   description = "Password for the default Airflow admin user."
   type        = string
   sensitive   = true
-}
-
-variable "airflow_api_secret_key" {
-  description = "Static Airflow API secret key used for request signing."
-  type        = string
-  sensitive   = true
-}
-
-variable "minio_buckets" {
-  description = "Buckets to create in MinIO."
-  type        = list(string)
-  default     = ["raw-data", "iceberg-tables", "mlflow-artifacts"]
 }
 
 variable "deploy_optional_local_charts" {
@@ -170,4 +170,16 @@ variable "pgbouncer_reserve_pool_size" {
   description = "PgBouncer reserve backend pool size."
   type        = number
   default     = 10
+}
+
+variable "certmanager_version" {
+  description = "cert-manager Helm chart version."
+  type        = string
+  default     = "v1.20.2"
+}
+
+variable "kserve_version" {
+  description = "KServe manifest version to download and apply."
+  type        = string
+  default     = "v0.11.0"
 }

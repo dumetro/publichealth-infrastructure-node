@@ -6,31 +6,35 @@ namespace       = "data-stack"
 domain          = "dakar-datasphere-node.local"
 minio_root_user = "admin"
 
-minio_root_password      = "replace-with-strong-password"
-unity_catalog_admin_token = "replace-with-unity-catalog-token"
-grafana_admin_password   = "replace-with-grafana-admin-password"
-airflow_fernet_key       = "replace-with-airflow-fernet-key"
+minio_root_password         = "replace-with-strong-password"
+unity_catalog_admin_token   = "replace-with-unity-catalog-token"
+grafana_admin_password      = "replace-with-grafana-admin-password"
+airflow_fernet_key          = "replace-with-airflow-fernet-key"
 airflow_webserver_secret_key = "replace-with-airflow-webserver-secret-key"
-airflow_admin_password   = "replace-with-airflow-admin-password"
-airflow_api_secret_key   = "replace-with-airflow-api-secret-key"
+airflow_admin_password      = "replace-with-airflow-admin-password"
 
 postgres_superuser_password = "replace-with-postgres-superuser-password"
 postgres_app_password       = "replace-with-postgres-app-password"
 
-postgres_image_repository = "postgres-health-ext"
-postgres_image_tag        = "16"
-postgres_database         = "health_node"
-postgres_app_user         = "health_app"
-postgres_persistence_size = "50Gi"
-postgres_backup_schedule  = "0 2 * * *"
+postgres_image_repository      = "postgres-health-ext"
+postgres_image_tag             = "16"
+postgres_database              = "health_node"
+postgres_app_user              = "health_app"
+postgres_persistence_size      = "50Gi"
+postgres_backup_schedule       = "0 2 * * *"
 postgres_backup_retention_days = 7
 postgres_backup_history_limit  = 5
 postgres_backup_pvc_size       = "20Gi"
 
-storage_class                 = "local-path"
-pgbouncer_pool_mode           = "transaction"
-pgbouncer_max_client_conn     = 500
-pgbouncer_default_pool_size   = 40
-pgbouncer_reserve_pool_size   = 10
+minio_persistence_size = "250Gi"
+
+storage_class               = "local-path"
+pgbouncer_pool_mode         = "transaction"
+pgbouncer_max_client_conn   = 500
+pgbouncer_default_pool_size = 40
+pgbouncer_reserve_pool_size = 10
+
+certmanager_version = "v1.20.2"
+kserve_version      = "v0.11.0"
 
 deploy_optional_local_charts = false

@@ -231,22 +231,6 @@ After deployment, the following web consoles are available for interactive acces
 | **MinIO Console** | http://console.dakar-datasphere-node.local | admin | S3-compatible object storage: bucket management, file upload, access control |
 | **Grafana** | http://grafana.dakar-datasphere-node.local | admin | Cluster monitoring, performance dashboards, alerting |
 
-### Credential Retrieval
-
-```bash
-# Airflow admin password
-kubectl get secret airflow-secrets -n data-stack -o jsonpath='{.data.admin_password}' | base64 -d
-
-# JupyterHub password
-grep "password:" config/values/jupyterhub-values.yaml | tail -1
-
-# MinIO root password
-kubectl get secret minio -n data-stack -o jsonpath='{.data.root-password}' | base64 -d
-
-# Grafana admin password
-kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
-```
-
 ### Service Features
 
 #### Airflow Webserver
@@ -281,17 +265,122 @@ kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-pa
 - Alert manager integration for incident response
 - Custom dashboard creation for application-specific metrics
 
-### Access from Remote Machine
+### Default Credentials
 
-If accessing from a different machine than the deployment server:
+All services use the `admin` username. Passwords are stored in Kubernetes secrets and were set via environment variables during deployment (see [Required secrets](#required-secrets)).
 
-1. **Add node IP to `/etc/hosts`:**
-   ```bash
-   echo "<NODE_IP>  airflow.dakar-datasphere-node.local jupyter.dakar-datasphere-node.local minio.dakar-datasphere-node.local console.dakar-datasphere-node.local grafana.dakar-datasphere-node.local" >> /etc/hosts
-   ```
-   (Replace `<NODE_IP>` with the result of `hostname -I | awk '{print $1}'` on the deployment server)
+| Service | Username | How to retrieve password |
+|---------|----------|--------------------------|
+| **Airflow** | admin | `kubectl get secret airflow-secrets -n data-stack -o jsonpath='{.data.admin_password}' \| base64 -d` |
+| **JupyterHub** | admin | Set in `config/values/jupyterhub-values.yaml` under `DummyAuthenticator.password`, or in a local override file |
+| **MinIO** | admin | `kubectl get secret minio -n data-stack -o jsonpath='{.data.root-password}' \| base64 -d` |
+| **Grafana** | admin | `kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' \| base64 -d` |
+| **PostgreSQL** (superuser) | postgres | `kubectl get secret postgres-creds -n data-stack -o jsonpath='{.data.postgres-password}' \| base64 -d` |
+| **PostgreSQL** (app user) | health_app | `kubectl get secret postgres-creds -n data-stack -o jsonpath='{.data.app-password}' \| base64 -d` |
 
-2. **Access via ingress hostnames** (port 80, proxied through ingress-nginx LoadBalancer)
+Quick credential dump (run on the deployment server):
+
+```bash
+echo "=== Service Credentials ==="
+echo -n "Airflow:    " && kubectl get secret airflow-secrets -n data-stack -o jsonpath='{.data.admin_password}' | base64 -d && echo
+echo -n "MinIO:      " && kubectl get secret minio -n data-stack -o jsonpath='{.data.root-password}' | base64 -d && echo
+echo -n "Grafana:    " && kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d && echo
+echo -n "PostgreSQL: " && kubectl get secret postgres-creds -n data-stack -o jsonpath='{.data.postgres-password}' | base64 -d && echo
+```
+
+### Accessing Services from Other Machines (LAN)
+
+By default, services are only reachable from the deployment server itself. To access them from other machines on the same network, two steps are required: opening the server firewall and configuring name resolution on client machines.
+
+#### Step 1: Open the firewall on the deployment server
+
+```bash
+# Check firewall status
+sudo ufw status
+
+# If active, allow HTTP and HTTPS traffic
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Verify the rules were added
+sudo ufw status
+
+# Confirm the ingress controller is bound to the node IP
+sudo ss -tlnp | grep -E ":80|:443"
+```
+
+If `ufw` is not installed or inactive, check `iptables` directly:
+
+```bash
+# Check for rules blocking port 80/443
+sudo iptables -L INPUT -n | grep -E "80|443"
+
+# If blocked, allow the ports
+sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+```
+
+If the server is behind a cloud or network firewall (security groups, NSGs, etc.), open ports 80 and 443 there as well.
+
+#### Step 2: Add host entries on each client machine
+
+Get the server IP (run on the deployment server):
+
+```bash
+hostname -I | awk '{print $1}'
+```
+
+Then add these lines to the hosts file on each client machine, replacing `<NODE_IP>` with the actual server IP:
+
+**Linux / macOS** — edit `/etc/hosts`:
+
+```
+<NODE_IP>  airflow.dakar-datasphere-node.local
+<NODE_IP>  jupyter.dakar-datasphere-node.local
+<NODE_IP>  grafana.dakar-datasphere-node.local
+<NODE_IP>  minio.dakar-datasphere-node.local
+<NODE_IP>  console.dakar-datasphere-node.local
+```
+
+**Windows** — edit `C:\Windows\System32\drivers\etc\hosts` (as Administrator):
+
+```
+<NODE_IP>  airflow.dakar-datasphere-node.local
+<NODE_IP>  jupyter.dakar-datasphere-node.local
+<NODE_IP>  grafana.dakar-datasphere-node.local
+<NODE_IP>  minio.dakar-datasphere-node.local
+<NODE_IP>  console.dakar-datasphere-node.local
+```
+
+#### Step 3: Test connectivity from the client machine
+
+```bash
+# Test raw connectivity to port 80 (should return 200 or 302)
+curl -s -o /dev/null -w "%{http_code}" -H "Host: airflow.dakar-datasphere-node.local" http://<NODE_IP>
+
+# Test with hostname resolution (after adding hosts entries)
+curl -s -o /dev/null -w "Airflow:  %{http_code}\n" http://airflow.dakar-datasphere-node.local
+curl -s -o /dev/null -w "Jupyter:  %{http_code}\n" http://jupyter.dakar-datasphere-node.local
+curl -s -o /dev/null -w "Grafana:  %{http_code}\n" http://grafana.dakar-datasphere-node.local
+curl -s -o /dev/null -w "Console:  %{http_code}\n" http://console.dakar-datasphere-node.local
+curl -s -o /dev/null -w "MinIO S3: %{http_code}\n" http://minio.dakar-datasphere-node.local
+```
+
+Expected responses:
+- **200** — Airflow, MinIO Console (login page served directly)
+- **302** — JupyterHub, Grafana (redirect to login page)
+- **403** — MinIO S3 API (expected, requires authentication headers)
+
+#### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Connection refused | Firewall blocking port 80/443 | Run `sudo ufw allow 80/tcp && sudo ufw allow 443/tcp` on the server |
+| Connection timed out | Network firewall / security group | Open ports 80/443 in the cloud/network firewall |
+| 404 Not Found | Hostname not matching any ingress rule | Verify `/etc/hosts` entry matches the exact hostname, check `kubectl get ingress -A` on the server |
+| 502 Bad Gateway | Backend pod not running or NetworkPolicy blocking | Check `kubectl get pods -n data-stack`, verify service has endpoints |
+| 503 Service Unavailable | Backend pod crashing | Check `kubectl logs -n <namespace> -l <selector> --tail=30` |
+| Name resolution failed | Missing hosts entry on client | Add the server IP to `/etc/hosts` on the client machine |
 
 Notes:
 

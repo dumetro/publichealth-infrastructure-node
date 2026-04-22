@@ -255,12 +255,16 @@ helm upgrade --install minio bitnami/minio \
   --set-string extraEnvVars[0].value="on" \
   --set-string extraEnvVars[1].name="MINIO_CONSOLE_ADDRESS" \
   --set-string extraEnvVars[1].value=":9001" \
+  --set networkPolicy.extraIngress[0].ports[0].port=9001 \
+  --set networkPolicy.extraIngress[0].ports[0].protocol=TCP \
   -f "$MINIO_SECRET_VALUES" \
   --wait --timeout 10m
 # NOTE: The standalone MinIO console image was deprecated and merged into the server
 # binary since RELEASE.2022-11+. We disable the Bitnami chart's separate console
 # Deployment (.console.enabled=false) and enable the built-in console via MINIO_BROWSER=on.
 # The console listens on port 9001 inside the MinIO server pod (--console-address :9001).
+# The chart's default NetworkPolicy only allows port 9000; networkPolicy.extraIngress
+# opens port 9001 so the ingress controller can reach the built-in console.
 # NOTE: Buckets are not created automatically at deploy time.
 # Create them manually after deploy: mc mb local/raw local/standard local/published
 
@@ -845,14 +849,14 @@ kubectl delete ingress \
   -l "app.kubernetes.io/instance=jupyterhub" \
   --ignore-not-found=true 2>/dev/null || true
 # Also remove by known name in case the label was not set on a previous run.
-kubectl delete ingress airflow-ingress airflow-webserver \
+kubectl delete ingress airflow-ingress airflow-webserver airflow-api-server \
   -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
 
 cat <<EOF | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: airflow-webserver
+  name: airflow-api-server
   namespace: ${NAMESPACE}
   annotations:
     kubernetes.io/ingress.class: nginx
@@ -868,7 +872,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: airflow-webserver
+                name: airflow-api-server
                 port:
                   number: 8080
 ---
@@ -928,6 +932,7 @@ metadata:
     kubernetes.io/ingress.class: nginx
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
 spec:
   ingressClassName: nginx
   rules:

@@ -1,6 +1,106 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+# --- Service Selection ---------------------------------------------------
+PROFILE=""
+SELECTED_SERVICES=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --profile=*) PROFILE="${1#*=}"; shift ;;
+    --services=*) SELECTED_SERVICES="${1#*=}"; shift ;;
+    *) shift ;;
+  esac
+done
+
+declare -A _PROFILES=(
+  [datalake]="monitoring ingress-nginx minio postgresql pgbouncer airflow spark-operator trino unity-catalog"
+  [hpc]="monitoring ingress-nginx postgresql pgbouncer mlflow jupyterhub workspace-service"
+  [inference-server]="monitoring ingress-nginx cert-manager kserve"
+  [all]="monitoring ingress-nginx minio postgresql pgbouncer airflow spark-operator trino unity-catalog mlflow jupyterhub workspace-service cert-manager kserve"
+)
+
+declare -A _DEPS=(
+  [airflow]="postgresql pgbouncer"
+  [mlflow]="minio"
+  [workspace-service]="postgresql pgbouncer"
+  [kserve]="cert-manager"
+)
+
+_resolve_services() {
+  local -a base=("$@")
+  local -a resolved=()
+  local svc dep
+  for svc in "${base[@]}"; do
+    resolved+=("$svc")
+    for dep in ${_DEPS[$svc]:-}; do
+      [[ " ${resolved[*]} " == *" $dep "* ]] || resolved+=("$dep")
+    done
+  done
+  # ingress-nginx always included
+  [[ " ${resolved[*]} " == *" ingress-nginx "* ]] || resolved+=("ingress-nginx")
+  echo "${resolved[@]}"
+}
+
+_interactive_pick() {
+  local -a all_svcs=(monitoring ingress-nginx minio postgresql pgbouncer airflow spark-operator trino unity-catalog mlflow jupyterhub workspace-service cert-manager kserve)
+  echo ""
+  echo "╔══════════════════════════════════════════════════╗"
+  echo "║  Public Health AI Node — Service Selection       ║"
+  echo "╠══════════════════════════════════════════════════╣"
+  echo "║  [1]  datalake         — Data Lakehouse         ║"
+  echo "║  [2]  hpc              — HPC & ML Dev           ║"
+  echo "║  [3]  inference-server — Model Serving          ║"
+  echo "║  [4]  all              — Full stack (dev/test)  ║"
+  echo "║  [5]  custom           — Choose individual svcs ║"
+  echo "╚══════════════════════════════════════════════════╝"
+  echo ""
+  read -rp "  Select [1-5]: " _choice
+  case "$_choice" in
+    1) PROFILE=datalake ;;
+    2) PROFILE=hpc ;;
+    3) PROFILE=inference-server ;;
+    4) PROFILE=all ;;
+    5)
+      echo ""
+      echo "  Available services:"
+      local i=1
+      for svc in "${all_svcs[@]}"; do
+        printf "    [%2d] %s\n" "$i" "$svc"; ((i++))
+      done
+      echo ""
+      read -rp "  Enter numbers separated by spaces (e.g. 1 3 4 5): " _nums
+      local -a picked=()
+      for n in $_nums; do
+        picked+=("${all_svcs[$((n-1))]}")
+      done
+      SELECTED_SERVICES="$(IFS=,; echo "${picked[*]}")"
+      ;;
+    *) echo "Invalid choice. Defaulting to full stack."; PROFILE=all ;;
+  esac
+}
+
+# Resolve final service list
+if [[ -z "$PROFILE" && -z "$SELECTED_SERVICES" ]]; then
+  _interactive_pick
+fi
+
+if [[ -n "$SELECTED_SERVICES" ]]; then
+  IFS=',' read -ra _base <<< "$SELECTED_SERVICES"
+elif [[ -n "$PROFILE" ]]; then
+  IFS=' ' read -ra _base <<< "${_PROFILES[$PROFILE]:?"Unknown profile: $PROFILE"}"
+fi
+
+IFS=' ' read -ra SELECTED_ARRAY <<< "$(_resolve_services "${_base[@]}")"
+SELECTED_SET=" ${SELECTED_ARRAY[*]} "
+
+should_install() { [[ "$SELECTED_SET" == *" $1 "* ]]; }
+
+echo ""
+echo "[INFO] Services selected: ${SELECTED_ARRAY[*]}"
+echo ""
+# --- End Service Selection -----------------------------------------------
+
 CONFIG_FILE="config/env-config.yaml"
 NAMESPACE=$(yq e '.global.namespace' "$CONFIG_FILE")
 DOMAIN=$(yq e '.global.domain' "$CONFIG_FILE")
@@ -44,13 +144,27 @@ if [[ -z "$UC_ACCESS_TOKEN" ]]; then
   UC_ACCESS_TOKEN="$(yq e '.unity_catalog.admin_token' "$CONFIG_FILE")"
 fi
 
-for required in MINIO_ROOT_PASSWORD GRAFANA_ADMIN_PASSWORD UC_ACCESS_TOKEN; do
-  if [[ -z "${!required}" || "${!required}" == "CHANGEME" ]]; then
-    echo "ERROR: Required secret '$required' is missing."
-    echo "Set it in your shell environment before running deploy/deploy-node.sh"
+# Validate secrets conditionally based on selected services
+should_install minio && {
+  if [[ -z "${MINIO_ROOT_PASSWORD}" || "${MINIO_ROOT_PASSWORD}" == "CHANGEME" ]]; then
+    echo "ERROR: MINIO_ROOT_PASSWORD is required (minio is selected)"
     exit 1
   fi
-done
+}
+
+should_install monitoring && {
+  if [[ -z "${GRAFANA_ADMIN_PASSWORD}" || "${GRAFANA_ADMIN_PASSWORD}" == "CHANGEME" ]]; then
+    echo "ERROR: GRAFANA_ADMIN_PASSWORD is required (monitoring is selected)"
+    exit 1
+  fi
+}
+
+should_install unity-catalog && {
+  if [[ -z "${UC_ACCESS_TOKEN}" || "${UC_ACCESS_TOKEN}" == "CHANGEME" ]]; then
+    echo "ERROR: UNITY_CATALOG_ADMIN_TOKEN is required (unity-catalog is selected)"
+    exit 1
+  fi
+}
 
 POSTGRES_SUPERUSER_PASSWORD="${POSTGRES_SUPERUSER_PASSWORD:-}"
 if [[ -z "$POSTGRES_SUPERUSER_PASSWORD" ]]; then
@@ -62,13 +176,16 @@ if [[ -z "$POSTGRES_APP_PASSWORD" ]]; then
   POSTGRES_APP_PASSWORD="$(yq e '.postgres.appPassword' "$CONFIG_FILE")"
 fi
 
-for required in POSTGRES_SUPERUSER_PASSWORD POSTGRES_APP_PASSWORD; do
-  if [[ -z "${!required}" || "${!required}" == "CHANGEME" ]]; then
-    echo "ERROR: Required secret '$required' is missing."
-    echo "Set it in your shell environment before running deploy/deploy-node.sh"
+should_install postgresql && {
+  if [[ -z "${POSTGRES_SUPERUSER_PASSWORD}" || "${POSTGRES_SUPERUSER_PASSWORD}" == "CHANGEME" ]]; then
+    echo "ERROR: POSTGRES_SUPERUSER_PASSWORD is required"
     exit 1
   fi
-done
+  if [[ -z "${POSTGRES_APP_PASSWORD}" || "${POSTGRES_APP_PASSWORD}" == "CHANGEME" ]]; then
+    echo "ERROR: POSTGRES_APP_PASSWORD is required"
+    exit 1
+  fi
+}
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq is required to render URI-safe Airflow metadata credentials."
@@ -181,51 +298,69 @@ handle_unexpected_error() {
 
 trap 'handle_unexpected_error' ERR
 
-TRINO_VALUES_RENDERED="$(mktemp)"
-GRAFANA_SECRET_VALUES="$(mktemp)"
-MINIO_SECRET_VALUES="$(mktemp)"
-POSTGRES_SECRET_VALUES="$(mktemp)"
-trap 'rm -f "$TRINO_VALUES_RENDERED" "$GRAFANA_SECRET_VALUES" "$MINIO_SECRET_VALUES" "$POSTGRES_SECRET_VALUES"' EXIT
+TRINO_VALUES_RENDERED=""
+GRAFANA_SECRET_VALUES=""
+MINIO_SECRET_VALUES=""
+POSTGRES_SECRET_VALUES=""
+_TEMP_FILES=()
 
-UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
+# Create temp files only for selected services
+should_install trino && {
+  TRINO_VALUES_RENDERED="$(mktemp)"
+  _TEMP_FILES+=("$TRINO_VALUES_RENDERED")
+  UC_ACCESS_TOKEN="$UC_ACCESS_TOKEN" envsubst '${UC_ACCESS_TOKEN}' < config/values/trino-values.yaml > "$TRINO_VALUES_RENDERED"
+}
 
-# Write secret values to temp YAML files using yq so any special characters
-# (commas, braces, backslashes, quotes) are safely encoded.
-# --set-string splits on commas and chokes on {}/[] — a -f values file has no such limits.
-yq e -n \
-  '.grafana.adminPassword = strenv("GRAFANA_ADMIN_PASSWORD")' \
-  > "$GRAFANA_SECRET_VALUES"
+should_install monitoring && {
+  GRAFANA_SECRET_VALUES="$(mktemp)"
+  _TEMP_FILES+=("$GRAFANA_SECRET_VALUES")
+  yq e -n \
+    '.grafana.adminPassword = strenv("GRAFANA_ADMIN_PASSWORD")' \
+    > "$GRAFANA_SECRET_VALUES"
+}
 
-yq e -n \
-  '.auth.rootPassword                          = strenv("MINIO_ROOT_PASSWORD") |
-   .auth.usePasswordFiles                      = false |
-   .console.enabled                            = false |
-   .command                                    = ["minio"] |
-   .args                                       = ["server", "/bitnami/minio/data", "--console-address", ":9001"] |
-   .extraContainerPorts[0].name                = "console" |
-   .extraContainerPorts[0].containerPort       = 9001 |
-   .service.extraPorts[0].name                 = "console" |
-   .service.extraPorts[0].port                 = 9001 |
-   .service.extraPorts[0].targetPort           = 9001' \
-  > "$MINIO_SECRET_VALUES"
+should_install minio && {
+  MINIO_SECRET_VALUES="$(mktemp)"
+  _TEMP_FILES+=("$MINIO_SECRET_VALUES")
+  yq e -n \
+    '.auth.rootPassword                          = strenv("MINIO_ROOT_PASSWORD") |
+     .auth.usePasswordFiles                      = false |
+     .console.enabled                            = false |
+     .command                                    = ["minio"] |
+     .args                                       = ["server", "/bitnami/minio/data", "--console-address", ":9001"] |
+     .extraContainerPorts[0].name                = "console" |
+     .extraContainerPorts[0].containerPort       = 9001 |
+     .service.extraPorts[0].name                 = "console" |
+     .service.extraPorts[0].port                 = 9001 |
+     .service.extraPorts[0].targetPort           = 9001' \
+    > "$MINIO_SECRET_VALUES"
+}
 
-yq e -n \
-  '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
-   .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
-  > "$POSTGRES_SECRET_VALUES"
+should_install postgresql && {
+  POSTGRES_SECRET_VALUES="$(mktemp)"
+  _TEMP_FILES+=("$POSTGRES_SECRET_VALUES")
+  yq e -n \
+    '.auth.postgresPassword = strenv("POSTGRES_SUPERUSER_PASSWORD") |
+     .auth.password         = strenv("POSTGRES_APP_PASSWORD")' \
+    > "$POSTGRES_SECRET_VALUES"
+}
+
+trap "rm -f ${_TEMP_FILES[*]}" EXIT
 
 echo "🚀 Initiating Public Health AI Node Deployment..."
 
 # 1. Monitoring Stack — deployed first so Prometheus Operator CRDs (ServiceMonitor etc.)
 # are available before ingress-nginx tries to create a ServiceMonitor resource.
-set_checkpoint "Monitoring stack" "monitoring" "monitoring" "app.kubernetes.io/instance=monitoring"
-helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring --create-namespace \
-  -f config/values/monitoring-values.yaml \
-  -f "$GRAFANA_SECRET_VALUES"
-echo "[OK] Monitoring stack deployed."
+if should_install monitoring; then
+  set_checkpoint "Monitoring stack" "monitoring" "monitoring" "app.kubernetes.io/instance=monitoring"
+  helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+    --namespace monitoring --create-namespace \
+    -f config/values/monitoring-values.yaml \
+    -f "$GRAFANA_SECRET_VALUES"
+  echo "[OK] Monitoring stack deployed."
+fi
 
-# 2. Gateway — depends on ServiceMonitor CRD from step 1.
+# 2. Gateway — ingress-nginx is always included
 set_checkpoint "ingress-nginx" "ingress-basic" "ingress-nginx" "app.kubernetes.io/instance=ingress-nginx"
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-basic --create-namespace \
@@ -233,65 +368,67 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 echo "[OK] ingress-nginx deployed."
 
 # 3. Storage
-# Bitnami minio images require a paid subscription since Aug 2025 — override with the
-# official quay.io/minio/minio image which is freely available.
-# This chart version still defaults to a separate console image that is no longer
-# published, so disable that deployment and run the upstream server with explicit
-# arguments instead of the Bitnami entrypoint contract.
-set_checkpoint "MinIO" "$NAMESPACE" "minio" "app.kubernetes.io/instance=minio"
-helm upgrade --install minio bitnami/minio \
-  --namespace "$NAMESPACE" --create-namespace \
-  --set global.security.allowInsecureImages=true \
-  --set-string image.registry="quay.io" \
-  --set-string image.repository="minio/minio" \
-  --set-string image.tag="RELEASE.2025-09-07T16-13-09Z" \
-  --set-string clientImage.registry="quay.io" \
-  --set-string clientImage.repository="minio/mc" \
-  --set-string clientImage.tag="latest" \
-  --set-string auth.rootUser="$MINIO_ROOT_USER" \
-  --set apiIngress.enabled=false \
-  --set-string persistence.size="$MINIO_PERSISTENCE_SIZE" \
-  --set-string extraEnvVars[0].name="MINIO_BROWSER" \
-  --set-string extraEnvVars[0].value="on" \
-  --set-string extraEnvVars[1].name="MINIO_CONSOLE_ADDRESS" \
-  --set-string extraEnvVars[1].value=":9001" \
-  --set networkPolicy.extraIngress[0].ports[0].port=9001 \
-  --set networkPolicy.extraIngress[0].ports[0].protocol=TCP \
-  -f "$MINIO_SECRET_VALUES" \
-  --wait --timeout 10m
-# NOTE: The standalone MinIO console image was deprecated and merged into the server
-# binary since RELEASE.2022-11+. We disable the Bitnami chart's separate console
-# Deployment (.console.enabled=false) and enable the built-in console via MINIO_BROWSER=on.
-# The console listens on port 9001 inside the MinIO server pod (--console-address :9001).
-# The chart's default NetworkPolicy only allows port 9000; networkPolicy.extraIngress
-# opens port 9001 so the ingress controller can reach the built-in console.
-# NOTE: Buckets are not created automatically at deploy time.
-# Create them manually after deploy: mc mb local/raw local/standard local/published
+if should_install minio; then
+  # Bitnami minio images require a paid subscription since Aug 2025 — override with the
+  # official quay.io/minio/minio image which is freely available.
+  # This chart version still defaults to a separate console image that is no longer
+  # published, so disable that deployment and run the upstream server with explicit
+  # arguments instead of the Bitnami entrypoint contract.
+  set_checkpoint "MinIO" "$NAMESPACE" "minio" "app.kubernetes.io/instance=minio"
+  helm upgrade --install minio bitnami/minio \
+    --namespace "$NAMESPACE" --create-namespace \
+    --set global.security.allowInsecureImages=true \
+    --set-string image.registry="quay.io" \
+    --set-string image.repository="minio/minio" \
+    --set-string image.tag="RELEASE.2025-09-07T16-13-09Z" \
+    --set-string clientImage.registry="quay.io" \
+    --set-string clientImage.repository="minio/mc" \
+    --set-string clientImage.tag="latest" \
+    --set-string auth.rootUser="$MINIO_ROOT_USER" \
+    --set apiIngress.enabled=false \
+    --set-string persistence.size="$MINIO_PERSISTENCE_SIZE" \
+    --set-string extraEnvVars[0].name="MINIO_BROWSER" \
+    --set-string extraEnvVars[0].value="on" \
+    --set-string extraEnvVars[1].name="MINIO_CONSOLE_ADDRESS" \
+    --set-string extraEnvVars[1].value=":9001" \
+    --set networkPolicy.extraIngress[0].ports[0].port=9001 \
+    --set networkPolicy.extraIngress[0].ports[0].protocol=TCP \
+    -f "$MINIO_SECRET_VALUES" \
+    --wait --timeout 10m
+  # NOTE: The standalone MinIO console image was deprecated and merged into the server
+  # binary since RELEASE.2022-11+. We disable the Bitnami chart's separate console
+  # Deployment (.console.enabled=false) and enable the built-in console via MINIO_BROWSER=on.
+  # The console listens on port 9001 inside the MinIO server pod (--console-address :9001).
+  # The chart's default NetworkPolicy only allows port 9000; networkPolicy.extraIngress
+  # opens port 9001 so the ingress controller can reach the built-in console.
+  # NOTE: Buckets are not created automatically at deploy time.
+  # Create them manually after deploy: mc mb local/raw local/standard local/published
 
-if ! kubectl rollout status deployment/minio -n "$NAMESPACE" --timeout=10m; then
-  echo ""
-  echo "ERROR: MinIO deployment did not become ready within 10m. Diagnostics:"
-  echo ""
-  echo "--- Pod status ---"
-  kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=minio -o wide || true
-  echo ""
-  echo "--- Pod events ---"
-  MINIO_POD_DIAG="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=minio,app.kubernetes.io/instance=minio -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-  if [[ -n "$MINIO_POD_DIAG" ]]; then
-    kubectl describe pod "$MINIO_POD_DIAG" -n "$NAMESPACE" || true
+  if ! kubectl rollout status deployment/minio -n "$NAMESPACE" --timeout=10m; then
     echo ""
-    echo "--- Container logs ---"
-    kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --tail=80 || true
+    echo "ERROR: MinIO deployment did not become ready within 10m. Diagnostics:"
     echo ""
-    echo "--- Previous container logs ---"
-    kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --previous --tail=80 || true
-  else
-    echo "  (no MinIO pod found)"
-    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -20 || true
+    echo "--- Pod status ---"
+    kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=minio -o wide || true
+    echo ""
+    echo "--- Pod events ---"
+    MINIO_POD_DIAG="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=minio,app.kubernetes.io/instance=minio -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    if [[ -n "$MINIO_POD_DIAG" ]]; then
+      kubectl describe pod "$MINIO_POD_DIAG" -n "$NAMESPACE" || true
+      echo ""
+      echo "--- Container logs ---"
+      kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --tail=80 || true
+      echo ""
+      echo "--- Previous container logs ---"
+      kubectl logs "$MINIO_POD_DIAG" -n "$NAMESPACE" --previous --tail=80 || true
+    else
+      echo "  (no MinIO pod found)"
+      kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -20 || true
+    fi
+    exit 1
   fi
-  exit 1
+  echo "[OK] MinIO deployed."
 fi
-echo "[OK] MinIO deployed."
 
 # 4. Database — deployed as a plain StatefulSet using our custom postgis+pgvector image.
 # The Bitnami postgresql chart expects Bitnami-specific entrypoints that are not present
@@ -300,7 +437,9 @@ echo "[OK] MinIO deployed."
 # Delete any existing postgresql StatefulSet before applying — Kubernetes forbids in-place
 # updates to volumeClaimTemplates and selector fields (e.g. leftover from a failed Bitnami
 # install). The PVC is preserved so data survives across re-deploys.
-set_checkpoint "PostgreSQL StatefulSet" "$NAMESPACE" "" "app=postgresql"
+if should_install postgresql; then
+  set_checkpoint "PostgreSQL StatefulSet" "$NAMESPACE" "" "app=postgresql"
+fi
 # Only delete the StatefulSet if its selector doesn't match ours. When it already uses
 # app=postgresql (created by a prior run of this script), kubectl apply can update it in
 # place — no delete needed. The delete-first path is for cleaning up a leftover Bitnami
@@ -444,13 +583,14 @@ fi
 
 # Create app user, grant privileges, and enable extensions.
 # Write a temporary SQL file into the pod to avoid shell quoting complexity with passwords.
-set_checkpoint "PostgreSQL initialization" "$NAMESPACE" "" "app=postgresql"
-PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.postgres-password}' | base64 -d)"
-PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
-PGPASSWORD_APP_SQL_ESCAPED="${PGPASSWORD_APP//\'/\'\'}"
+if should_install postgresql; then
+  set_checkpoint "PostgreSQL initialization" "$NAMESPACE" "" "app=postgresql"
+  PGPASSWORD_SUPERUSER="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.postgres-password}' | base64 -d)"
+  PGPASSWORD_APP="$(kubectl get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.app-password}' | base64 -d)"
+  PGPASSWORD_APP_SQL_ESCAPED="${PGPASSWORD_APP//\'/\'\'}"
 
-if [[ "$POSTGRES_APP_PASSWORD" != "$PGPASSWORD_APP" ]]; then
-  echo "WARN: POSTGRES_APP_PASSWORD differs from the live postgres-creds secret."
+  if [[ "$POSTGRES_APP_PASSWORD" != "$PGPASSWORD_APP" ]]; then
+    echo "WARN: POSTGRES_APP_PASSWORD differs from the live postgres-creds secret."
   echo "      Using the cluster secret value for PgBouncer and Airflow to keep auth consistent."
   echo "      Re-run deploy/setup-secrets.sh first if you intended to rotate database credentials."
 fi
@@ -472,14 +612,16 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS vector;
 ENDSQL
 
-kubectl cp "$TMP_INIT_SQL" "$NAMESPACE/$POSTGRES_POD:/tmp/init.sql"
-kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
-  sh -ec "PGPASSWORD='$PGPASSWORD_SUPERUSER' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -f /tmp/init.sql && rm /tmp/init.sql"
-echo "[OK] PostgreSQL deployed and initialized."
+  kubectl cp "$TMP_INIT_SQL" "$NAMESPACE/$POSTGRES_POD:/tmp/init.sql"
+  kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
+    sh -ec "PGPASSWORD='$PGPASSWORD_SUPERUSER' psql -v ON_ERROR_STOP=1 -U postgres -d '$POSTGRES_DB' -f /tmp/init.sql && rm /tmp/init.sql"
+  echo "[OK] PostgreSQL deployed and initialized."
+fi
 
 # Delete the pgbouncer Deployment before apply to clear any stale pods that may
 # be stuck in ImagePullBackOff from a previous image tag and blocking rolling updates.
-set_checkpoint "PgBouncer" "$NAMESPACE" "" "app=pgbouncer"
+if should_install pgbouncer; then
+  set_checkpoint "PgBouncer" "$NAMESPACE" "" "app=pgbouncer"
 kubectl delete deployment pgbouncer -n "$NAMESPACE" --ignore-not-found=true
 
 cat <<EOF | kubectl apply -f -
@@ -675,29 +817,33 @@ if ! kubectl rollout status deployment/pgbouncer -n "$NAMESPACE" --timeout=5m; t
   fi
   exit 1
 fi
-echo "[OK] PgBouncer deployed."
+  echo "[OK] PgBouncer deployed."
+fi
 
 # 5. Metadata
-if [[ -d "./charts/unity-catalog" ]]; then
+if should_install unity-catalog; then
   set_checkpoint "Unity Catalog" "$NAMESPACE" "unity-catalog" "app.kubernetes.io/instance=unity-catalog"
   helm upgrade --install unity-catalog ./charts/unity-catalog \
     --namespace "$NAMESPACE"
   echo "[OK] Unity Catalog deployed."
-else
-  echo "WARN: ./charts/unity-catalog not found; skipping Unity Catalog Helm release."
 fi
 
 # 6. Compute
-set_checkpoint "Spark Operator" "$NAMESPACE" "spark-operator" "app.kubernetes.io/instance=spark-operator"
-helm upgrade --install spark-operator spark-operator/spark-operator \
-  --namespace "$NAMESPACE" \
-  -f config/values/spark-values.yaml
-echo "[OK] Spark Operator deployed."
-set_checkpoint "Trino" "$NAMESPACE" "trino" "app.kubernetes.io/instance=trino"
-helm upgrade --install trino trino/trino \
-  --namespace "$NAMESPACE" \
-  -f "$TRINO_VALUES_RENDERED"
-echo "[OK] Trino deployed."
+if should_install spark-operator; then
+  set_checkpoint "Spark Operator" "$NAMESPACE" "spark-operator" "app.kubernetes.io/instance=spark-operator"
+  helm upgrade --install spark-operator spark-operator/spark-operator \
+    --namespace "$NAMESPACE" \
+    -f config/values/spark-values.yaml
+  echo "[OK] Spark Operator deployed."
+fi
+
+if should_install trino; then
+  set_checkpoint "Trino" "$NAMESPACE" "trino" "app.kubernetes.io/instance=trino"
+  helm upgrade --install trino trino/trino \
+    --namespace "$NAMESPACE" \
+    -f "$TRINO_VALUES_RENDERED"
+  echo "[OK] Trino deployed."
+fi
 
 # 7. Orchestration
 # Uninstall any previous Airflow release FIRST — a prior install may have adopted the
@@ -721,12 +867,13 @@ kubectl create secret generic airflow-metadata \
   --dry-run=client -o yaml | kubectl apply -f -
 
 AIRFLOW_INSTALL_FAILED=false
-if ! helm upgrade --install airflow apache-airflow/airflow \
-  --namespace "$NAMESPACE" \
-  -f config/values/airflow-values.yaml \
-  --set ingress.web.enabled=false \
-  --set ingress.apiServer.enabled=false \
-  --timeout 10m; then
+if should_install airflow; then
+  if ! helm upgrade --install airflow apache-airflow/airflow \
+    --namespace "$NAMESPACE" \
+    -f config/values/airflow-values.yaml \
+    --set ingress.web.enabled=false \
+    --set ingress.apiServer.enabled=false \
+    --timeout 10m; then
   AIRFLOW_INSTALL_FAILED=true
   diagnose_current_step "helm upgrade --install airflow"
   echo ""
@@ -759,74 +906,90 @@ if ! helm upgrade --install airflow apache-airflow/airflow \
   echo "         - Scheduled ETL jobs managed via Airflow"
   echo "         - Pipeline-triggered MLflow runs (if DAGs feed MLflow)"
   echo "         - KServe batch inference jobs triggered by Airflow DAGs"
-else
-  echo "[OK] Airflow deployed."
+  else
+    echo "[OK] Airflow deployed."
+  fi
 fi
 
 # 8. ML & Workspace
-if [[ -d "./charts/mlflow" ]]; then
+if should_install mlflow; then
   set_checkpoint "MLflow" "$NAMESPACE" "mlflow" "app.kubernetes.io/instance=mlflow"
   helm upgrade --install mlflow ./charts/mlflow \
     --namespace "$NAMESPACE"
   echo "[OK] MLflow deployed."
-else
-  echo "WARN: ./charts/mlflow not found; skipping MLflow Helm release."
 fi
 
-set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
-if command -v k3s >/dev/null 2>&1; then
-  K3S_IMAGE_LIST="$(sudo -n k3s ctr --namespace k8s.io images ls 2>/dev/null || true)"
-  if ! grep -q 'jupyter-health-env:latest' <<< "$K3S_IMAGE_LIST"; then
-    echo "ERROR: Required local image 'jupyter-health-env:latest' is not present in k3s containerd."
-    echo "Run sudo -E bash deploy/bootstrap.sh on this server, or import the image manually,"
-    echo "before re-running deploy/deploy-node.sh for the JupyterHub step."
-    exit 1
+if should_install jupyterhub; then
+  set_checkpoint "JupyterHub image preflight" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
+  if command -v k3s >/dev/null 2>&1; then
+    K3S_IMAGE_LIST="$(sudo -n k3s ctr --namespace k8s.io images ls 2>/dev/null || true)"
+    if ! grep -q 'jupyter-health-env:latest' <<< "$K3S_IMAGE_LIST"; then
+      echo "ERROR: Required local image 'jupyter-health-env:latest' is not present in k3s containerd."
+      echo "Run sudo -E bash deploy/bootstrap.sh on this server, or import the image manually,"
+      echo "before re-running deploy/deploy-node.sh for the JupyterHub step."
+      exit 1
+    fi
+  fi
+
+  # Clean up stale JupyterHub hook puller resources from prior failed upgrades.
+  # The chart config disables these hooks for locally imported images.
+  kubectl delete job hook-image-awaiter -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete daemonset hook-image-puller -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+
+  set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
+  helm upgrade --install jupyterhub jupyterhub/jupyterhub \
+    --namespace "$NAMESPACE" \
+    -f config/values/jupyterhub-values.yaml \
+    --set ingress.enabled=false
+  echo "[OK] JupyterHub deployed."
+fi
+
+# 9. Workspace Service
+if should_install workspace-service; then
+  set_checkpoint "Workspace Service" "$NAMESPACE" "workspace-service" "app.kubernetes.io/instance=workspace-service"
+  helm upgrade --install workspace-service ./charts/workspace-service \
+    --namespace "$NAMESPACE" \
+    --set ingress.enabled=true \
+    --set ingress.hosts[0].host="$(yq e '.workspace_service.hostname' "$CONFIG_FILE")" \
+    --set service.port=8000
+  echo "[OK] Workspace Service deployed."
+fi
+
+# 11. Serving
+# KServe's default manifest creates cert-manager Certificate/Issuer resources for its
+# webhook. Install cert-manager first when those CRDs are missing.
+if should_install cert-manager; then
+  if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
+    set_checkpoint "cert-manager" "cert-manager" "cert-manager" "app.kubernetes.io/instance=cert-manager"
+    helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+      --namespace cert-manager \
+      --create-namespace \
+      --version v1.20.2 \
+      --set crds.enabled=true \
+      --wait --timeout 10m
+    echo "[OK] cert-manager deployed."
   fi
 fi
 
-# Clean up stale JupyterHub hook puller resources from prior failed upgrades.
-# The chart config disables these hooks for locally imported images.
-kubectl delete job hook-image-awaiter -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-kubectl delete daemonset hook-image-puller -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-
-set_checkpoint "JupyterHub" "$NAMESPACE" "jupyterhub" "release=jupyterhub"
-helm upgrade --install jupyterhub jupyterhub/jupyterhub \
-  --namespace "$NAMESPACE" \
-  -f config/values/jupyterhub-values.yaml \
-  --set ingress.enabled=false
-echo "[OK] JupyterHub deployed."
-
-# 9. Serving
-# KServe's default manifest creates cert-manager Certificate/Issuer resources for its
-# webhook. Install cert-manager first when those CRDs are missing.
-if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
-  set_checkpoint "cert-manager" "cert-manager" "cert-manager" "app.kubernetes.io/instance=cert-manager"
-  helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
-    --namespace cert-manager \
-    --create-namespace \
-    --version v1.20.2 \
-    --set crds.enabled=true \
-    --wait --timeout 10m
-  echo "[OK] cert-manager deployed."
-fi
-
 # Download and apply KServe manifest (pinned version v0.11.0)
-set_checkpoint "KServe manifest apply" "kserve" "" ""
-KSERVE_MANIFEST="deploy/kserve-v0.11.0.yaml"
-if [ ! -f "$KSERVE_MANIFEST" ]; then
-  curl -fsSL https://github.com/kserve/kserve/releases/download/v0.11.0/kserve.yaml -o "$KSERVE_MANIFEST"
+if should_install kserve; then
+  set_checkpoint "KServe manifest apply" "kserve" "" ""
+  KSERVE_MANIFEST="deploy/kserve-v0.11.0.yaml"
+  if [ ! -f "$KSERVE_MANIFEST" ]; then
+    curl -fsSL https://github.com/kserve/kserve/releases/download/v0.11.0/kserve.yaml -o "$KSERVE_MANIFEST"
+  fi
+
+  if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
+    echo "ERROR: cert-manager CRDs are still missing after the cert-manager install step."
+    echo "KServe requires cert-manager Certificate and Issuer CRDs before its manifest can be applied."
+    exit 1
+  fi
+
+  kubectl apply -f "$KSERVE_MANIFEST"
+  echo "[OK] KServe manifest applied."
 fi
 
-if ! kubectl get crd certificates.cert-manager.io issuers.cert-manager.io >/dev/null 2>&1; then
-  echo "ERROR: cert-manager CRDs are still missing after the cert-manager install step."
-  echo "KServe requires cert-manager Certificate and Issuer CRDs before its manifest can be applied."
-  exit 1
-fi
-
-kubectl apply -f "$KSERVE_MANIFEST"
-echo "[OK] KServe manifest applied."
-
-# 10. Ingress — all service ingresses are created here, after every service is deployed.
+# 12. Ingress — all service ingresses are created here, after every service is deployed.
 # Managing ingress via kubectl apply rather than chart values avoids two classes of bugs:
 #   (a) chart-version ambiguity (e.g. Airflow chart reads host vs hosts[0].name depending
 #       on minor version, producing host "_" when the wrong key is used)
@@ -852,7 +1015,7 @@ kubectl delete ingress \
 kubectl delete ingress airflow-ingress airflow-webserver airflow-api-server \
   -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
 
-cat <<EOF | kubectl apply -f -
+should_install airflow && kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -875,7 +1038,9 @@ spec:
                 name: airflow-api-server
                 port:
                   number: 8080
----
+EOF
+
+should_install jupyterhub && kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -898,7 +1063,9 @@ spec:
                 name: proxy-public
                 port:
                   number: 80
----
+EOF
+
+should_install minio && kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -947,6 +1114,32 @@ spec:
                 port:
                   number: 9001
 EOF
+
+should_install workspace-service && kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: workspace-service
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: $(yq e '.workspace_service.hostname' "$CONFIG_FILE")
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: workspace-service
+                port:
+                  number: 8000
+EOF
+
 echo "[OK] Service ingresses created."
 
 if [[ "$AIRFLOW_INSTALL_FAILED" == "true" ]]; then

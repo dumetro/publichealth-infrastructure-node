@@ -1,0 +1,13 @@
+apiVersion: v2
+name: workspace-service
+description: Workspace management service for JupyterHub multi-server deployment
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - jupyterhub
+  - workspace
+  - data-stack
+maintainers:
+  - name: Platform Team
+    email: platform@example.com

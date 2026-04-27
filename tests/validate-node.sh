@@ -174,9 +174,29 @@ else
   echo "  ⓘ MLflow: not deployed (optional)"
 fi
 
-# Step 9: Serving (KServe)
+# Step 9: Workspace Service
 echo ""
-echo "🚀 Step 9: Model Serving (KServe)"
+echo "👷 Step 9: Workspace Service"
+if kubectl get deployment -n "$NAMESPACE" -l app.kubernetes.io/instance=workspace-service >/dev/null 2>&1; then
+  check_status "Workspace Service" "$NAMESPACE" "app.kubernetes.io/instance=workspace-service" 1
+
+  WS_POD=$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/instance=workspace-service -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [[ -n "$WS_POD" ]]; then
+    WS_HEALTH=$(kubectl exec -n "$NAMESPACE" "$WS_POD" -- curl -s http://localhost:8000/health 2>/dev/null || echo "{}")
+    if echo "$WS_HEALTH" | grep -q '"status"'; then
+      echo "  ✓ Workspace Service health: healthy"
+    else
+      echo "  ⚠ Workspace Service health: not responding"
+      ((WARNINGS++))
+    fi
+  fi
+else
+  echo "  ⓘ Workspace Service: not deployed (optional)"
+fi
+
+# Step 10: Serving (KServe)
+echo ""
+echo "🚀 Step 10: Model Serving (KServe)"
 if kubectl get crd inferenceservices.serving.kserve.io >/dev/null 2>&1; then
   check_status "KServe Controller" "kserve" "app.kubernetes.io/instance=kserve" 1
   echo "  ✓ KServe: CRDs and controller present"
@@ -185,13 +205,14 @@ else
   ((WARNINGS++))
 fi
 
-# Step 10: Ingresses
+# Step 11: Ingresses
 echo ""
-echo "🌐 Step 10: Service Ingresses"
+echo "🌐 Step 11: Service Ingresses"
 check_resource "ingress" "airflow-api-server" "$NAMESPACE"
 check_resource "ingress" "jupyterhub" "$NAMESPACE"
 check_resource "ingress" "minio-api" "$NAMESPACE"
 check_resource "ingress" "minio-console" "$NAMESPACE"
+check_resource "ingress" "workspace-service" "$NAMESPACE"
 
 # Service Endpoints
 echo ""
@@ -235,6 +256,19 @@ echo "    - Pre-configured kernels (Python, SQL, etc.)"
 echo "    - Direct access to PostgreSQL, MinIO, MLflow, Spark"
 echo "    - Persistent home directories per user"
 echo "    - Profile selection (Standard 1CPU/2GB, Large 2CPU/4GB)"
+echo ""
+WORKSPACE_SERVICE_HOST="$(yq e '.workspace_service.hostname' "$CONFIG_FILE" 2>/dev/null || echo 'workspaces.example.com')"
+echo "Workspace Service:"
+echo "  URL: http://${WORKSPACE_SERVICE_HOST}"
+echo "  API Base: http://${WORKSPACE_SERVICE_HOST}/api/v1"
+echo "  Health: http://${WORKSPACE_SERVICE_HOST}/health"
+echo "  Admin Token: (from JUPYTERHUB_API_TOKEN environment variable)"
+echo "  Features:"
+echo "    - Per-user workspace management"
+echo "    - MinIO bucket access control"
+echo "    - Git repository integration"
+echo "    - Notebook dependency tracking"
+echo "    - JupyterHub credential injection"
 echo ""
 echo "Grafana Monitoring & Dashboards:"
 echo "  URL: http://${GRAFANA_HOST}"

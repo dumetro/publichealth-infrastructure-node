@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workspace-service.fullname" . }}
+  labels:
+    {{- include "workspace-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "workspace-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "workspace-service.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "workspace-service.serviceAccountName" . }}
+      containers:
+      - name: workspace-service
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.service.targetPort }}
+          protocol: TCP
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 12 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 12 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        env:
+        {{- range $key, $value := .Values.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: workspace-service-creds
+              key: database-url
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: workspace-service-creds
+              key: minio-access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: workspace-service-creds
+              key: minio-secret-key
+        - name: JUPYTERHUB_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: workspace-service-creds
+              key: jupyterhub-api-token
+              optional: true
+        volumeMounts:
+        - name: schema
+          mountPath: /app/app/schema
+      volumes:
+      - name: schema
+        configMap:
+          name: workspace-service-schema
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "workspace-service.fullname" . }}
+  labels:
+    {{- include "workspace-service.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "workspace-service.selectorLabels" . | nindent 4 }}

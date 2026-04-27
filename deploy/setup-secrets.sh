@@ -61,6 +61,18 @@ kubectl create secret generic postgres-creds \
   --from-literal=app-password="$POSTGRES_APP_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+# Workspace Service credentials
+WORKSPACE_SERVICE_DB_URL="postgresql://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgresql.${NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
+WORKSPACE_SERVICE_JUPYTERHUB_API_TOKEN="${JUPYTERHUB_API_TOKEN:-}"
+
+kubectl create secret generic workspace-service-creds \
+  --namespace "$NAMESPACE" \
+  --from-literal=database-url="$WORKSPACE_SERVICE_DB_URL" \
+  --from-literal=minio-access-key="$MINIO_USER" \
+  --from-literal=minio-secret-key="$MINIO_PASS" \
+  --from-literal=jupyterhub-api-token="$WORKSPACE_SERVICE_JUPYTERHUB_API_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 if [[ -z "$AIRFLOW_SQL_ALCHEMY_CONN" ]]; then
   POSTGRES_APP_USER="$(yq e '.postgres.appUser' "$CONFIG_FILE")"
   POSTGRES_DB="$(yq e '.postgres.database' "$CONFIG_FILE")"

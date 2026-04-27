@@ -60,3 +60,7 @@ monitoring:
     domain: "grafana.dakar-datasphere-node.local"
   prometheus:
     retention: "15d"
+
+workspace_service:
+  hostname: "workspaces.dakar-datasphere-node.local"
+  modellers_bucket: "modellers"

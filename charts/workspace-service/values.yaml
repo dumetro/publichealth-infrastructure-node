@@ -1,0 +1,74 @@
+replicaCount: 2
+
+image:
+  repository: workspace-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: workspaces.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+env:
+  LOG_LEVEL: "INFO"
+  KUBERNETES_NAMESPACE: "data-stack"
+  WORKSPACE_ADMINS: "admin"
+  MINIO_MODELLERS_BUCKET: "modellers"
+
+secrets:
+  postgresqlConnectionString: "postgresql://health_node:password@postgresql.data-stack.svc.cluster.local:5432/health_node"
+  minioAccessKey: "minioadmin"
+  minioSecretKey: "minioadmin"
+
+serviceAccount:
+  create: true
+  name: workspace-service
+
+rbac:
+  create: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

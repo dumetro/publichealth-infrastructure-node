@@ -17,6 +17,43 @@ hub:
       # The local override file should be excluded from version control.
       password: ""
 
+  extraConfig:
+    pre_spawn_hook.py: |
+      async def workspace_pre_spawn_hook(spawner):
+          import urllib.request, json
+          username = spawner.user.name
+          ws_svc = "http://workspace-service.data-stack.svc.cluster.local:8000"
+          try:
+              req = urllib.request.Request(
+                  f"{ws_svc}/api/v1/users/{username}/spawn-config",
+                  headers={"X-Hub-Internal": "true"}
+              )
+              with urllib.request.urlopen(req, timeout=5) as resp:
+                  config = json.loads(resp.read())
+          except Exception as e:
+              spawner.log.warning(f"workspace-service unreachable: {e}")
+              config = {}
+
+          # Replace shared MinIO root creds with per-user creds
+          minio_secret = config.get("minio_secret_name")
+          if minio_secret:
+              for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+                  spawner.environment.pop(key, None)
+              spawner.volumes.append({"name": "minio-user-creds", "secret": {"secretName": minio_secret}})
+              spawner.volume_mounts.append({"name": "minio-user-creds", "mountPath": "/vault/minio-creds", "readOnly": True})
+
+          # Mount git credentials
+          git_secret = config.get("git_secret_name")
+          git_type = config.get("git_credential_type")
+          if git_secret and git_type == "https_token":
+              spawner.volumes.append({"name": "git-creds", "secret": {"secretName": git_secret}})
+              spawner.volume_mounts.append({"name": "git-creds", "mountPath": "/home/jovyan/.git-credentials-file", "subPath": "git-credentials", "readOnly": True})
+          elif git_secret and git_type == "ssh_key":
+              spawner.volumes.append({"name": "git-ssh", "secret": {"secretName": git_secret, "defaultMode": 0o400}})
+              spawner.volume_mounts.append({"name": "git-ssh", "mountPath": "/home/jovyan/.ssh", "readOnly": True})
+
+      c.KubeSpawner.pre_spawn_hook = workspace_pre_spawn_hook
+
 proxy:
   service:
     type: ClusterIP
@@ -48,21 +85,12 @@ singleuser:
     capacity: 10Gi
     homeMountPath: /home/jovyan
 
-  # Connection details for platform services; credentials from minio-creds secret
+  # Connection details for platform services
+  # Per-user MinIO credentials are injected via workspace-service pre_spawn_hook
   extraEnv:
     MLFLOW_TRACKING_URI: "http://mlflow.data-stack.svc.cluster.local:5000"
     AWS_ENDPOINT_URL: "http://minio.data-stack.svc.cluster.local:9000"
     AWS_DEFAULT_REGION: "us-east-1"
-    AWS_ACCESS_KEY_ID:
-      valueFrom:
-        secretKeyRef:
-          name: minio-creds
-          key: access-key
-    AWS_SECRET_ACCESS_KEY:
-      valueFrom:
-        secretKeyRef:
-          name: minio-creds
-          key: secret-key
 
   # Default resource envelope; overridden per-profile below
   cpu:
